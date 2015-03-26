@@ -5,149 +5,318 @@ from scipy.sparse import linalg
 import os
 import sys
 
-class iceflow(object):
+class IceFlow(object):
 
-  def __init__(self, boundary_condition='Dirichlet0', sliding=True, useGRASS=False, location=None, mapset='PERMANENT', gisbase='/usr/local/src/grass_trunk/dist.x86_64-unknown-linux-gnu', grassdata_dir='grassdata', C0=0.0006, T=273.15, bcap=1000.):
-    """
-    Instantiates the iceflow class. If useGRASS=True, other parameters are
-    needed, and these connect to the GRASS GIS location from which the climate 
-    and mass balance parameters are derived.
+  def __init__(self):
+    self.add_default_variable_values()
     
-    BOUNDARY CONDITIONS
-    The domain boundary should not intersect
-    any major ice masses. These default boundary condition options are suited
-    for dealing with small peripheral ice masses adjacent to the domain
-    boundary.
-    
-    Dirichlet0 - prescribed head: boundary cells are prescribed as zero ice 
-    thickness. "Eliminated" flux is recorded as a dynamic leackage term.
-    
-    Neumann0 - prescribed flux: boundary cells have zero flux leaving domain.
-    Ice "piles up" where it flows against the domain boundary.
-    
-    BASAL SLIDING COEFFICIENT [m/a/Pa]
-    Proportional to driving stress. Marshall et al. (2005) use 0.0006 m/a/Pa 
-    for Vatnajokull Ice Cap.
-    Colgan used 0.0003 m/a/Pa for the Front Range in Colorado.
-    Defaults to 0.0006 m/a/Pa
-    
-    ICE TEMPERATURE [K]
-    Defaults to T=273.15 K: isothermal and constant through time and space.
-    Right now, is constant, and cannot be used with arrays
-    So flow law parameter defined here alone
-    """
-    self.Option_BC = boundary_condition
-    self.sliding = sliding # Whether or not sliding will happen here
-    self.useGRASS = useGRASS
+  def initialize(self):
+    self.initialize_define_region()
     if self.useGRASS:
-      if location:
-        print "Using GRASS location", location
-      else:
-        sys.exit("Must define a GRASS GIS location.")
-      # Implicitly 
-      os.environ['GISBASE'] = gisbase
-      gisdbase = os.path.join(os.environ['HOME'], grassdata_dir)
-      sys.path.append(os.path.join(os.environ['GISBASE'], "etc", "python"))
-      import grass.script as grass
-      import grass.script.setup as gsetup
-      gsetup.init(gisbase, gisdbase, location, mapset)
-      from grass.script import array as garray
-    self.grass = grass
-    self.garray = garray
-    # define constants:
+      self.initialize_GRASS()
+      self.initialize_elevation_x_y_and_ice_grids_from_GRASS()
+      if self.mass_balance_parameterization == 'TP_PDD':
+        self.initialize_climate_from_GRASS()
+      elif self.mass_balance_parameterization == 'ELA':
+        self.basic_mass_balance_with_GRASS()
+    else:
+      print "No mass balance methods without GRASS created yet!"
+    self.initialize_compute_variables()
+    self.initialize_output_lists()
+    self.enforce_boundary_conditions()
+
+  def initialize_runtime(self):
+    self.t_all = np.arange(self.t_start_years, self.t_start_years+self.run_length_years + self.dt_years/10., self.dt_years) # inclusive of final value
+    self.t_i = self.t_all[0]
+    self.index_i = 0
+
+  def update(self):
+    self.t_i = self.t_all[self.index_i]
+    self.build_sparse_array()
+    self.solve_sparse_equation()
+    self.record_model_parameters()
+    if self.t_i % self.plot_t_years == 0:
+      self.plot()
+    self.index_i += 1 # Should place at beginning so it starts at 1
+    
+  def run(self):
+    for self.t_i in self.t_all:
+      self.build_sparse_array()
+      self.solve_sparse_equation()
+      if self.t_i % self.plot_t_years == 0:
+        self.plot()
+
+  def finalize(self, plot=False, save=True):
+    if self.output_filename:
+      self.save_output()
+
+  def add_default_variable_values(self):
+    ############
+    # Run time #
+    ############
+    self.run_length_years = None
+    self.t_start_years = None
+    self.dt_years   = 0.25
+    self.plot_t_years = None # plot every this many years
+  
+    ###################
+    # Basic constants #
+    ###################
     self.secyr = 3600*24*365.24 # conversion factor 1 [s/a]
     self.g = 9.81 # gravitational acceleration [m/s2]
     self.rho = 917. # glacier density [kg/m3]
-    self.n = 3 # flow law exponent [unitless]  
-    self.C0 = C0/self.secyr # convert units of basal sliding coefficient [m/s/Pa]
-    # Including those for effective ice viscosity
-    R = 8.314 # ideal gas constant [J/mol/K]
-    QcCold = 60000. # cold/warm ice creep activation energy [J/mol]
-    QcWarm = 139000.
-    AoCold = 1.14E-5 # cold/warm ice reference flow law parameter [/Pa3/a]
-    AoWarm = 5.47E10
+    self.R = 8.314 # ideal gas constant [J/mol/K]
+    
+    ########################################
+    # Constants that we may what to change #
+    ########################################
+    self.n_ice = 3 # flow law exponent [unitless]
+    # cold/warm ice creep activation energy [J/mol]
+    self.QcCold = 60000.
+    self.QcWarm = 139000.
+    # cold/warm ice reference flow law parameter [/Pa3/a]
+    self.AoCold = 1.14E-5
+    self.AoWarm = 5.47E10
+    
+    ###################
+    # Run with gFlex? #
+    ###################
+    self.isostatic = False
+    # Using an elastic lithosphere with a response time scale
+    # See paper showing that this is the best approximation to a true global model!!!!!!!!!!!!!!
+    # <-----------------------------------------------------------------------------TO DO
+    flexure_time_scale = 1E-20 # instantaneous
+    
+    ########################
+    # Plotting during run? #
+    ########################
+    self.plot_as_you_go = True
+    
+    ##########
+    # Output #
+    ##########
+    # Interval over which to record output [years]
+    self.record_frequency_years = None
+    # Output filename -- set to None if you do not want to save ouptput
+    self.output_filename='IceFlow_Output'
+    # Leave blank for no output figure
+    self.output_figure = 'IceThickness.png'
+
+    ###########################
+    # Basal surface elevaiton #
+    ###########################
+    # If self.Zb_initial = a grid, then it is the bed elevaiton
+    # If it is a string, then it is a file path or GRASS raster map
+    # (and this is defined by useGRASS, bellow)
+    self.elevation = None # MUST BE DEFINED IN INPUT!
+    self.dx = None # Defined if run outside GIS
+    self.dy = None # Will default to self.dx if it remains None and dx
+                   # is defined
+    # These next two are defined for the case in which there is no GRASS
+    # GIS integration, to set the grid coordinate system
+    self.xmin = None
+    self.ymin = None
+    
+    ###############
+    # GRASS setup #
+    ###############
+    self.useGRASS=False
+    self.location=None
+    self.mapset='PERMANENT'
+    self.gisbase=None
+    self.grassdata_dir='grassdata'
+    
+    #################
+    # sliding setup #
+    #################
+    self.sliding=True
+    # BASAL SLIDING COEFFICIENT [m/a/Pa]
+    # Proportional to driving stress. Marshall et al. (2005) use 0.0006 m/a/Pa 
+    # for Vatnajokull Ice Cap.
+    # Colgan used 0.0003 m/a/Pa for the Front Range in Colorado.
+    # Defaults to 0.0006 m/a/Pa
+    self.C0_per_year=0.0006
+    
+    #############
+    # Ice setup #
+    #############
+    # ICE TEMPERATURE [K]
+    # Defaults to T=273.15 K: isothermal and constant through time and space.
+    # Right now, is constant, and cannot be used with arrays
+    # So flow law parameter defined here alone
+    self.T=273.15 # Can also be a grid and/or vary with time
+    # BOUNDARY CONDITIONS
+    # The domain boundary should not intersect
+    # any major ice masses. These default boundary condition options are suited
+    # for dealing with small peripheral ice masses adjacent to the domain
+    # boundary.
+    # 
+    # Dirichlet0 - prescribed head: boundary cells are prescribed as zero ice 
+    # thickness. "Eliminated" flux is recorded as a dynamic leackage term.
+    # 
+    # Neumann0 - prescribed flux: boundary cells have zero flux leaving domain.
+    # Ice "piles up" where it flows against the domain boundary.
+    self.boundary_condition='Dirichlet0'
+    self.StartingIce = None # Set to the name of a raster grid of initial ice 
+                             # thicknesses,
+                             # e.g., from a former model run or field data
+    
+    #################################
+    # Mass balance setup -- generic #
+    #################################
+    # Maximum mass balance -- this can be a grid or a scalar
+    self.bcap_per_year = 1.0
+    # PICK PARAMETERIZATION TYPE
+    # Options:
+    #   TP_PDD --> Temperature and Precipitation, PDD
+    #   ELA    --> Prescribed mass balance with ELA
+    #              (constant if inputs are numbers, variable in space if inputs 
+    #               are grids or scalars pointing to GRASS maps)
+    self.mass_balance_parameterization = None
+    
+    ################################
+    # Mass balance setup -- TP_PDD #
+    ################################
+    # Temperature and precipitation: can be modern or from the past
+    # Strong to grid location, load value, etc.
+    self.temperature_melt_season = None
+    self.precipitation_solid     = None
+    # If we have modern temperature and precipitation fields to modify
+    # These could be scalar or grid values
+    # And could (in theory) change with time, though they don't now.
+    self.T_correction = 0. # air temperature offset to glacial climate [K]
+    self.P_factor = 1. # precipitation scaling factor to glacial climate [fraction]
+    # The following are used to project temperature and precipitation to altitude
+    self.temperature_lapse = -4.7/1000. # See Anderson et al. (2014) for a good lapse rate compilation
+    # precip_lapse doesn't take drying at high altitudes into account
+    self.precip_lapse_years = 0.3698/1000. # characteristic regional precip. lapse rate [m/a/m]
+    self.melt_factor_days = 6./1000. # surface ablation per air temperature (melt factor) [m/d/K]
+    # Length of melt season
+    self.melt_season_length_days = None
+
+    #############################
+    # Mass balance setup -- PMB #
+    #############################
+    # These can be grids or constant values across the whole system
+    self.ELA  = None
+    self.dbdz_per_year = None
+    # (see above for bcap)
+
+  def initialize_define_region(self):
+    # Glacier model domain -- must be projected coordinate system
+    # Should be defined after a grid is defined
+    # These bounds work for both GRASS and non-GRASS initializations
+    if self.n and self.s:
+      pass
+    else:
+      if self.ymin is None:
+        print "Automatically setting undefined south value to 0"
+        self.ymin = 0
+      self.s = self.ymin + self.dy/2.
+      self.n = self.ymin + self.dy * self.Zb_initial.shape[0] - self.dy/2.
+      y = np.arange(self.s, self.n + self.dy/10., self.dy)
+    if self.w and self.e:
+      pass
+    else:
+      if self.xmin is None:
+        self.xmin = 0
+        print "Automatically setting undefined west value to 0"
+      self.w = self.xmin + self.dx/2.
+      self.e = self.xmin + self.dx * self.Zb_initial.shape[1] - self.dy/2.
+      x = np.arange(self.w, self.e + self.dx/10., self.dx)
+    if self.w and self.e and self.n and self.s:
+      pass
+    else:
+      self.x, self.y = np.meshgrid(x, y)
+
+  def initialize_compute_variables(self):
+    # Variable conversions from years to seconds
+    self.C0 = self.C0_per_year / self.secyr
+    self.bcap = self.bcap_per_year / self.secyr
+    self.dbdz = self.dbdz_per_year = self.secyr
+    self.dt = self.dt_years*self.secyr # time step [s]
     # Combine cold and warm ice flow law parameters [/Pa3/a]
-    self.T = T # for output
-    self.A = AoCold*np.exp(-QcCold/R/T) * (T < 263.5) + AoWarm*np.exp(-QcWarm/R/T) * (T >= 263.5)
-    self.bcap = bcap/self.secyr
-
-  def initialize_elevation_grid_from_file(self, topo, X, Y):
-    """
-    # INPUT: Bedrock/earth surface topography.
-    # XI_500m = local easting coordinates [m]
-    # YI_500m = local northing coordinates [m]
-    # Z_500m = elevation [m]
-    topoin = loadmat('topography_500m.mat')
-    x = X = topoin['XI_500m']
-    y = Y = topoin['YI_500m']
-    Z = topoin['Z_500m']
-    """
-    pass
-
-  def initialize_modern_climate_grid_from_file(self, precip, temp):
-    """
-    # INPUT: Climatological mean contemporary precipitation and air temperature 
-    # fields, gridded to save input domain as the topography.
-    # Ta_500m = mean annual air temprature [K]
-    # Pa_500m = mean annual precipitation [m/a]
-    climatein = loadmat('climate_500m.mat')
-    Tair = climatein['Ta_500m']
-    Pair = climatein['Pa_500m']
-    """
-    pass
+    self.A = self.AoCold*np.exp(-self.QcCold/self.R/self.T) * (self.T < 263.5) + self.AoWarm*np.exp(-self.QcWarm/self.R/self.T) * (self.T >= 263.5) / self.secyr
+    # Time
+    tEnd = self.run_length_years*self.secyr # model run length [s]
+    self.t = np.arange(0, tEnd+self.dt/2., self.dt) # time vector [s]
+    if self.record_frequency_years is None:
+      self.record_frequency_years = np.min((self.run_length_years, 10.))
+    self.record_timesteps = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years)
+    # Input elevation map
+    if type(self.elevation) is not str and type(self.elevation):
+      self.Zb_initial = self.elevation
+    if self.Zb_initial is not None:
+      self.Zb = self.Zb_initial.copy()
+    # Second thoughts on this
+    #if self.dx and self.dy is None:
+    #  self.dy = self.dx.copy()
+    # PDD
+    # Surface mass balance - An elevation-dependent surface mass 
+    # balance is parameterized from observed contemporary solid precipitation 
+    # and air temperature fields that are perturbed to glacial climate.
+    self.precip_lapse = self.precip_lapse_years/self.secyr # convert units of precipitation lapse rate [m/s/m]
+    self.mu = self.melt_factor_days/86400. # convert units of melt factor [m/s/K]
+    self.melt_season_length = self.melt_season_length_days * 86400.
     
-  def initialize_modern_climate_and_elevation_from_GRASS(self, temperature_summer, precipitation_annual, elevation, resolution, n, s, w, e, ice=None):
-    self.mass_balance_type='PDD'
-    """
-    Get climate and elevation grids from GRASS
-    Need to separate these if I will use different data for mass balance
-    """
-    # First, use the region extent from the topography, cropped (by hand) to remove nulls at borders
-    self.grass.run_command('g.region', n=n, s=s, w=w, e=e)
-    # Then apply the desired resolution. This won't be *quite* a square grid, but will be close.
-    self.grass.run_command('g.region', res=resolution)
-    # Next, import arrays of topography, climate, and (if applicable) ice
-    self.Zb = self.garray.array()
-    self.Zb.read(elevation)
-    self.Zb_initial = self.Zb.copy() # in case isostasy is used
-    self.Tair = self.garray.array()
-    self.Tair.read(temperature_summer)
-    self.Pair = self.garray.array()
-    self.Pair.read(precipitation_annual)
-    self.Pair /= 1000. # PRISM is in mm/yr, change to m/yr.
-    # And then create the grids of the x and y values that go along with these positions
-    self.dx = self.grass.region()['ewres']
-    self.dy = self.grass.region()['nsres']
-    self.grass.mapcalc('x = x()', overwrite=True, quiet=True)
-    self.grass.mapcalc('y = y()', overwrite=True, quiet=True)
-    #X = np.arange(0, Z.shape[1], self.dx)
-    #Y = np.arange(0, Z.shape[0], self.dy)
-    self.x = self.garray.array()
-    self.y = self.garray.array()
-    self.x.read('x')
-    self.y.read('y')
-    self.ny, self.nx = self.x.shape # number of easting and northing nodes [unitless]  
-    self.H0 = self.garray.array() # Starts out with 0's at the right shape
-    if ice:
-      self.H0.read(ice)
+  def initialize_output_lists(self):
+    self.record_index = 0 # index of recorded selected time steps [unitless]
+    self.b_timestep = 0 # surface mass balance record counter [a]
+    self.a_timestep = 0 # surface ablation record counter [a]
+    self.c_timestep = 0 # surface accumulation record counter [a]
+    self.outflow_timestep = 0 # domain outflow record counter [a]
+    self.time_series = np.zeros((len(self.record_timesteps),5)) # record of selected variables at selected time step [variable]  
+    self.H_record = [] # List to record ice thicknes at time slices [m]
+    self.Zb_record = [] # List to record bed elevation at time slices [m] -- important for isostasy, maybe in future if erosion is included
+    self.dz_record = [] # change in bed elev (isostasy, etc.)
+    self.uS_record = [] # List to record sliding velocities at time slices [m/a]
+    self.b_record = [] # List to record mass balance at time slices [m/a]
+    self.uD_record = [] # List to record depth-averaged deformational velocities [m/a]
+    self.t_record = [] # time step [yr]
+
+  def initialize_GRASS(self):
+    if self.location:
+      print "Using GRASS location", self.location
+    else:
+      sys.exit("Must define a GRASS GIS location.")
+    # Implicitly 
+    os.environ['GISBASE'] = self.gisbase
+    gisdbase = os.path.join(os.environ['HOME'], self.grassdata_dir)
+    sys.path.append(os.path.join(os.environ['GISBASE'], "etc", "python"))
+    import grass.script as gr
+    import grass.script.setup as gsetup
+    gsetup.init(self.gisbase, gisdbase, self.location, self.mapset)
+    from grass.script import array as garray
+    self.gr = gr
+    self.garray = garray
+    if self.n is None and self.s is None and self.w is None and self.e is None:
+      pass
+    elif self.n is None or self.s is None or self.w is None or self.e is None:
+      sys.exit('Incomplete description of edge values')
+    else:
+      self.gr.run_command('g.region', n=self.n, s=self.s, w=self.w, e=self.e)
+      # Then apply the desired resolution.
+      # This won't be *quite* a square grid, but will be close.
+      if self.dx and self.dy:
+        self.gr.run_command('g.region', ewres=self.dx, nsres=self.dy)
+      else:
+        print "dx and dy not both defined: not updating grid resolution."
+    self.gr.run_command('g.region', region='IceFlowRegion') # Save it
     
-  def initialize_modern_elevation_and_grids_from_GRASS(self, elevation, resolution, n, s, w, e, ice=None):
+  def initialize_elevation_x_y_and_ice_grids_from_GRASS(self):
     """
     Get elevation grids from GRASS as well as the grid dimensions
+    and the pre-existing ice (if applicable)
     """
-    # First, use the region extent from the topography, cropped (by hand) to remove nulls at borders
-    self.grass.run_command('g.region', n=n, s=s, w=w, e=e)
-    # Then apply the desired resolution. This won't be *quite* a square grid, but will be close.
-    self.grass.run_command('g.region', res=resolution)
-    # Next, import arrays of topography
-    self.Zb = self.garray.array()
-    self.Zb.read(elevation)
-    self.Zb_initial = self.Zb.copy() # in case isostasy is used
+    # Import arrays of topography
+    self.Zb_initial = self.garray.array()
+    self.Zb_initial.read(self.elevation)
+    self.Zb = self.Zb_initial.copy() # in case isostasy is used
     # And then create the grids of the x and y values that go along with these positions
-    self.dx = self.grass.region()['ewres']
-    self.dy = self.grass.region()['nsres']
-    self.grass.mapcalc('x = x()', overwrite=True, quiet=True)
-    self.grass.mapcalc('y = y()', overwrite=True, quiet=True)
+    self.dx = self.gr.region()['ewres']
+    self.dy = self.gr.region()['nsres']
+    self.gr.mapcalc('x = x()', overwrite=True, quiet=True)
+    self.gr.mapcalc('y = y()', overwrite=True, quiet=True)
     #X = np.arange(0, Z.shape[1], self.dx)
     #Y = np.arange(0, Z.shape[0], self.dy)
     self.x = self.garray.array()
@@ -157,130 +326,35 @@ class iceflow(object):
     self.ny, self.nx = self.x.shape # number of easting and northing nodes [unitless]  
     self.H0 = self.garray.array() # Starts out with 0's at the right shape
     # And ice array, if applicable
-    if ice:
-      self.H0.read(ice)
+    if self.StartingIce:
+      self.H0.read(self.StartingIce)
 
-  def initialize_modern_climate_from_GRASS(self, temperature_summer, precipitation_annual):
-    self.mass_balance_type='PDD'
+  def initialize_climate_from_GRASS(self):
     """
     Get grids from GRASS
     Run after elevation grids obtained (this needs to be fixed)
     """
     self.Tair = self.garray.array()
-    self.Tair.read(temperature_summer)
+    self.Tair.read(self.temperature_melt_season)
     self.Pair = self.garray.array()
-    self.Pair.read(precipitation_annual)
-    self.Pair /= 1000. # PRISM is in mm/yr, change to m/yr.
+    self.Pair.read(self.precipitation_solid)
+    # NOTE:
+    # self.Pair /= (1000. * self.secyr) # e.g., PRISM is in mm/yr, change to m/s.
+    # Correction factors
+    self.Ta = self.Tair + self.T_correction # Temperature average through melt season [degC]
+    self.Pa = self.Pair * self.P_factor # Total annual precipitation (assume snow?) (doesn't have to be this) [m/s]
 
-  def climate_corrections(self, T_correction, P_factor, melt_season_length_days):
-    self.T_correction = T_correction
-    self.P_factor = P_factor
-    self.melt_season_length_days = melt_season_length_days
-    self.Ta = self.Tair + T_correction # Temperature average through melt season [degC]
-    self.Pa = self.Pair * P_factor / self.secyr # Total annual precipitation (assume snow?) (doesn't have to be this) [m/s]
-    
   def basic_mass_balance_with_GRASS(self, ELA, dbdz):
     """
     dbdx = change in mass balance w/ change in x
     dbdy = ditto for y
     ...
     """
-    self.mass_balance_type='ELA'
-    self.ela0 = ELA
-    self.dbdz = dbdz # [mWE/a/m]
-    self.dbdz /= self.secyr
-    #self.bcap = bcap # accumulation cap for now
-
-  def initialize_mass_balance_basic_PDD(self, melt_factor, precip_lapse, temp_lapse=-4.5E-3):
-    """"
-    Surface mass balance - An elevation-dependent surface mass 
-    balance is parameterized from observed contemporary solid precipitation 
-    and air temperature fields that are perturbed to glacial climate.
-    """
-    # Removed delete step -- having small arrays in memory not an issue
-    self.precip_lapse = precip_lapse/self.secyr # convert units of precipitation lapse rate [m/s/m]
-    self.mu = melt_factor/86400. # convert units of melt factor [m/s/K]
-    self.temp_lapse=temp_lapse
-
-  def setup(self, run_length, dt_years=0.5, record_frequency=None):
-    """
-    self.run_length: total simulation length [a]
-    self.dt_years:   time step [a]    
-    """
-    # simulation length:
-    self.run_length = run_length
-    self.dt_years = dt_years
-    tEnd = self.run_length*self.secyr # model run length [s] 
-    self.dt = self.dt_years*self.secyr # time step [s]
-    self.t = np.arange(0, tEnd+self.dt/2., self.dt) # time vector [s]
-
-    # variables to record series and slices:
-    # time interval between time steps selected for recording [a]
-    if record_frequency:
-      self.record_frequency = record_frequency
-    else:
-      self.record_frequency = np.min((self.run_length, 10.)) # time interval between time steps selected for recording [a]
-      record_timesteps = np.arange(0, self.run_length+self.record_frequency/2., self.record_frequency) # time-steps to be record [a]
-    self.record_index = 0 # index of recorded selected time steps [unitless]
-    self.b_timestep = 0 # surface mass balance record counter [a]
-    self.a_timestep = 0 # surface ablation record counter [a]
-    self.c_timestep = 0 # surface accumulation record counter [a]
-    self.outflow_timestep = 0 # domain outflow record counter [a]
-    self.time_series = np.zeros((len(record_timesteps),5)) # record of selected variables at selected time step [variable]  
-    self.H_record = [] # List to record ice thicknes at time slices [m]
-    self.Zb_record = [] # List to record bed elevation at time slices [m] -- important for isostasy, maybe in future if erosion is included
-    self.dz_record = [] # change in bed elev (isostasy, etc.)
-    self.uS_record = [] # List to record sliding velocities at time slices [m/a]
-    self.b_record = [] # List to record mass balance at time slices [m/a]
-    self.uD_record = [] # List to record depth-averaged deformational velocities [m/a]
-    self.t_record = [] # time step [yr]
-
-
-
-  def update(self):
-    self.build_sparse_array()
-    self.solve_sparse_equation()
-
-  def run(self, run_length, plot=False):
-    self.setup(run_length=run_length)
-    self.enforce_boundary_conditions()
-    self.update()
-    if plot:
-      self.plot()
-
-  """
-  def initialize(self):
-    pass
-
-  def update(self):
-    pass
-  
-  def finalize(self, plot=False, save=True):
-    pass
-  
-  def run(self):
-    self.initialize()
-    self.run()
-    self.finalize()
-    
-  def set_mass_balance_grid(self, bgrid):
-    self.bgrid = bgrid
-
-  def get_ice_elevation(self):
-    return self.Z...
-  
-  def get_topo(self):
-    return self.Z...
-    
-  def get_total_elevation(self):
-    return self.Z... + ...
-    
-  def update_basal_elevation
-  """    
+    self.ela0 = self.ELA.copy() # Initial ELA field -- may change over time
 
   def enforce_boundary_conditions(self):
     # boundary conditions:  
-    if self.Option_BC == 'Dirichlet0':
+    if self.boundary_condition == 'Dirichlet0':
       # prescribed zero ice thickness
       # boundary condition mask [binary]
       self.BC = np.ones((self.ny,self.nx))
@@ -289,11 +363,11 @@ class iceflow(object):
       self.BC[-1:,:] = 0 
       self.BC[:,-1:] = 0
       self.Zb_initial *= self.BC
-    elif self.Option_BC == 'Neumann0':
+    elif self.boundary_condition == 'Neumann0':
       # type 2 (prescribed zero ice flux) 
       self.BC = np.ones((self.ny,self.nx)) # boundary condition mask [binary]
     
-  def setup_sparse_array(self):
+  def initialize_sparse_array(self):
 
     self.R_term_yes = np.hstack((np.ones((self.ny,self.nx-1)), np.zeros((self.ny,1)))) # identify nodes where the RIGHT-hand matrix term is present [binary]
     self.L_term_yes = np.hstack((np.zeros((self.ny,1)), np.ones((self.ny,self.nx-1)))) # identify nodes where the LEFT-hand matrix term is present [binary]
@@ -312,30 +386,22 @@ class iceflow(object):
     self.Zb_jP1i = np.vstack((self.Zb[1:,:], np.zeros((1,self.nx)))) # bedrock elevation at node j+1,i [m]
     self.Zb_jM1i = np.vstack((np.zeros((1,self.nx)), self.Zb[:-1,:])) # bedrock elevation at node j-1,i [m]  
       
-    self.A /= self.secyr # convert units of effective ice viscosity [/Pa3/s]  
-
     # initialize evolving ice geometry variables:
     self.H = self.H0.copy() # ice thickness at node j,i [m] 
     self.Zs = self.Zb + self.H # ice surface elevation at node j,i [m]
     
-  def build_sparse_array(self, tt):
-  
+  def build_sparse_array(self):
     # calculate ice form and flow variables:
-    try:
-      # If isostasy is involved, include projected future isostatic change in the ice flow calculations
-      self.Zs = self.Zb + self.H# + self.dz # ice surface elevation at node j,i: projected to future w/ isostasy [m]
-    except:
-      self.Zs = self.Zb + self.H # ice surface elevation at node j,i [m]
-    if self.mass_balance_type == 'PDD':
-      #a = (self.Ta + (self.H*self.temp_lapse))*self.mu * self.melt_season_length_days/365.24 # surface ablation scaled to melt season [m/s]
-      #c = self.Pa + (self.H*self.precip_lapse)/self.secyr # surface accumulation [m/s]
+    self.Zs = self.Zb + self.H # ice surface elevation at node j,i [m]
+    if self.mass_balance_parameterization == 'TP_PDD':
       self.dz_plus_H = self.H + self.Zb - self.Zb_initial
-      a = (self.Ta + (self.dz_plus_H*self.temp_lapse))*self.mu * self.melt_season_length_days/365.24 # surface ablation scaled to melt season [m/s]
-      c = self.Pa + (self.dz_plus_H*self.precip_lapse)/self.secyr # surface accumulation [m/s]
+      a = (self.Ta + (self.dz_plus_H*self.temperature_lapse))*self.mu * self.melt_season_length # surface ablation scaled to melt season [m/yr]
+      c = (self.Pa + (self.dz_plus_H*self.precip_lapse) )*self.secyr # surface accumulation [m/yr]
       self.b = (c - a) # surface mass balance [m/s]
-    elif self.mass_balance_type == 'ELA':
+    elif self.mass_balance_parameterization == 'ELA':
       self.b = self.dbdz*(self.Zs-self.ela0)
-    self.b[self.b > self.bcap] = self.bcap
+    self.b[self.b > self.bcap_per_year] = self.bcap_per_year
+    self.b /= self.secyr # No clue whether I was trying to do this or not -- looks like seconds are a go!
       
     self.HPh = np.hstack(( (self.H[:,1:]+self.H[:,:-1])/2., np.zeros((self.ny,1)) )) # ice thickness at node j,i+1(?) [m]
     self.HMh = np.hstack(( np.zeros((self.ny,1)), (self.H[:,1:] + self.H[:,:-1])/2. )) # ice thickness at node j,i-1(?) [m]
@@ -358,10 +424,10 @@ class iceflow(object):
     tau_jPhi = -self.rho*self.g*self.H_jPhi*self.dZsdy_jPhi # driving stress at node j+1(?),i [Pa] - positive y direction
     tau_jMhi = -self.rho*self.g*self.H_jMhi*self.dZsdy_jMhi # driving stress at node j-1(?),i [Pa] - negative y direction
     
-    qPh = 2*self.A/(self.n+2)*(self.rho*self.g*self.alphaPh)**(self.n-1)*self.HPh**(self.n+1)*tauPh # ice discharge at node j,i+1(?) [m2/s]
-    qMh = 2*self.A/(self.n+2)*(self.rho*self.g*self.alphaMh)**(self.n-1)*self.HMh**(self.n+1)*tauMh # ice discharge at node j,i-1(?) [m2/s]
-    q_jPhi = 2*self.A/(self.n+2)*(self.rho*self.g*self.alpha_jPhi)**(self.n-1)*self.H_jPhi**(self.n+1)*tau_jPhi # ice discharge at node j+1(?),i [m2/s]
-    q_jMhi = 2*self.A/(self.n+2)*(self.rho*self.g*self.alpha_jMhi)**(self.n-1)*self.H_jMhi**(self.n+1)*tau_jMhi # ice discharge at node j-1(?),i [m2/s]
+    qPh = 2*self.A/(self.n_ice+2)*(self.rho*self.g*self.alphaPh)**(self.n_ice-1)*self.HPh**(self.n_ice+1)*tauPh # ice discharge at node j,i+1(?) [m2/s]
+    qMh = 2*self.A/(self.n_ice+2)*(self.rho*self.g*self.alphaMh)**(self.n_ice-1)*self.HMh**(self.n_ice+1)*tauMh # ice discharge at node j,i-1(?) [m2/s]
+    q_jPhi = 2*self.A/(self.n_ice+2)*(self.rho*self.g*self.alpha_jPhi)**(self.n_ice-1)*self.H_jPhi**(self.n_ice+1)*tau_jPhi # ice discharge at node j+1(?),i [m2/s]
+    q_jMhi = 2*self.A/(self.n_ice+2)*(self.rho*self.g*self.alpha_jMhi)**(self.n_ice-1)*self.H_jMhi**(self.n_ice+1)*tau_jMhi # ice discharge at node j-1(?),i [m2/s]
     
     self.uD = ( ((qPh/np.maximum(self.HPh,1E-8) + qMh/np.maximum(self.HMh,1E-8)) / 2.)**2 + ((q_jPhi/np.maximum(self.H_jPhi,1E-8) + q_jMhi/np.maximum(self.H_jMhi,1E-8)) / 2.)**2)**0.5 # absolute depth-averaged deformational velocity at node j,i [m/s]
 
@@ -444,11 +510,11 @@ class iceflow(object):
     self.a_timestep = self.a_timestep + np.sum(a*(self.H>0))*self.dx*self.dy*self.dt*self.rho # update time step surface ablation (kg/a)
     self.c_timestep = self.c_timestep + np.sum(c*(self.H>0))*self.dx*self.dy*self.dt*self.rho # update time step surface accumulation (kg/a) 
       
-  def record_model_parameters(self, tt, record_frequency):
-    self.record_timesteps = np.arange(0, self.run_length+record_frequency/2., record_frequency) # time-steps to be record [a]
+  def record_model_parameters(self):
+    self.record_timesteps = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years) # time-steps to be record [a]
     # at selected time steps, record various model parameters:
-    if self.t[tt]/self.secyr <= (self.record_timesteps[self.record_index] + self.dt/self.secyr/2.) and self.t[tt]/self.secyr >= (self.record_timesteps[self.record_index] - self.dt/self.secyr/2.):
-      print 'model year:', '%10.1f' %(self.t[tt]/self.secyr)
+    if self.t[self.t_i]/self.secyr < (self.record_timesteps[self.record_index] + self.dt/self.secyr/2.) and self.t[self.t_i]/self.secyr >= (self.record_timesteps[self.record_index] - self.dt/self.secyr/2.):
+      print 'model year:', '%10.1f' %(self.t[self.t_i]/self.secyr)
         # display current time step in command window [a]
       self.H_record.append(self.H)
         # record time step ice thickness field [m]
@@ -462,12 +528,12 @@ class iceflow(object):
         # record time step deformational velocity field [m/a]
       self.b_record.append(self.b*self.secyr)
         # record mass balance [m/a]
-      self.t_record.append(self.t[tt]/self.secyr)
+      self.t_record.append(self.t[self.t_i]/self.secyr)
       #self.time_series[self.record_index,:] = np.hstack(( self.record_timesteps[self.record_index], \
-      #                                          self.c_timestep/self.record_frequency, \
-      #                                          self.a_timestep/self.record_frequency, \
-      #                                          self.b_timestep/self.record_frequency, \
-      #                                          self.outflow_timestep/self.record_frequency ))
+      #                                          self.c_timestep/self.record_frequency_years, \
+      #                                          self.a_timestep/self.record_frequency_years, \
+      #                                          self.b_timestep/self.record_frequency_years, \
+      #                                          self.outflow_timestep/self.record_frequency_years ))
         # update time series of mass balance elements [kg/a]
       self.record_index += 1;
         # update record index [unitless]
@@ -480,15 +546,15 @@ class iceflow(object):
       self.outflow_timestep = 0;
         # reset domain outflow counter [a]
 
-  def save_output(self, filename='Simulation_Output'):
+  def save_output(self):
     out_array = (self.H_record,self.Zb_record,self.uD_record,self.uS_record,self.b_record,self.t_record,
       self.time_series,self.T,self.A,self.C0,self.x,self.y,self.Zb,self.BC,self.T_correction,\
       self.P_factor,self.mu,self.dx,self.dy)
-    np.save(filename, out_array) # save simulation output into a single .npy file that can be called on
+    np.save(output_filename, out_array) # save simulation output into a single .npy file that can be called on
       # for graphical output at a later time
     
 
-  def plot(self, save=True):
+  def plot(self):
     """
     save == True: save figure images
     save == False: draw the plots on screen
@@ -499,8 +565,8 @@ class iceflow(object):
     plt.imshow(self.H, interpolation='nearest')
     plt.colorbar()
     plt.title('Ice Thickness', fontsize=16)
-    if save:
-      plt.savefig('IceThickness.png')
+    if self.output_figure:
+      plt.savefig(self.output_figure)
       plt.close()
     plt.show()
 
