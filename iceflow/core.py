@@ -1,4 +1,5 @@
 import numpy as np
+from matplotlib import pyplot as plt
 import scipy
 from scipy.io import loadmat
 from scipy.sparse import linalg
@@ -24,38 +25,48 @@ class IceFlow(object):
     self.initialize_compute_variables()
     self.initialize_output_lists()
     self.enforce_boundary_conditions()
-
-  def initialize_runtime(self):
-    self.t_all = np.arange(self.t_start_years, self.t_start_years+self.run_length_years + self.dt_years/10., self.dt_years) # inclusive of final value
+    self.initialize_sparse_array()
+    if self.plot_during_run_flag:
+      plt.figure(1)
+      plt.show(block = False)
 
   def update(self):
     self.build_sparse_array()
     self.solve_sparse_equation()
+    self.output()
+    self.t_i += 1
 
   def output(self):
     """
     At selected time steps t_i, record various model parameters, and, if so 
     desired, plot.
     """
-    if self.t[self.t_i_output]/self.secyr < \
-      (self.record_timesteps[self.record_index] + self.dt/self.secyr/2.) \
-      and self.t[self.t_i_output]/self.secyr >= \
-      (self.record_timesteps[self.record_index] - self.dt/self.secyr/2.):
+    print self.t_years[self.t_i]
+    print self.record_timesteps_years[self.record_index]
+    if self.t_years[self.t_i] < \
+      (self.record_timesteps_years[self.record_index] + self.dt/self.secyr/2.) \
+      and self.t_years[self.t_i] >= \
+      (self.record_timesteps_years[self.record_index] - self.dt/self.secyr/2.):
       self.record_model_parameters()
-      if self.plot_as_you_go:
-        self.plot()
-      self.t_i_output += 1
+      if self.plot_during_run_flag:
+        self.plot_during_run()
     
   def run(self):
-    for self.t_i in self.t_all:
+    for self.ts in self.t:
       self.update()
-      self.output()
 
   def finalize(self):
+    print "***"
+    print "Model complete."
+    print self.t[-1]/self.secyr, "years elapsed"
+    print "***"
     if self.output_filename:
       self.save_output()
-    if self.plot_at_end:
-      print "No final plotting yet incorporated!"
+    if self.plot_at_end_flag:
+      self.plot_at_end()
+    if self.plot_during_run_flag:
+      plt.figure(1)
+      plt.show(block = True)
 
   def add_default_variable_values(self):
     ############
@@ -64,12 +75,8 @@ class IceFlow(object):
     self.run_length_years = None
     self.t_start_years = None
     self.dt_years   = 0.25
+    self.t_i = 0 # counter
   
-    #################
-    # Counter setup #
-    #################
-    self.t_i_output = 0
-
     ###################
     # Basic constants #
     ###################
@@ -101,9 +108,9 @@ class IceFlow(object):
     #############
     # Plotting? #
     #############
-    self.plot_as_you_go = False # Plots at times when outputs are recorded
-                                # so depends on self.record_frequency_years
-    self.plot_at_end = True
+    self.plot_during_run_flag = False # Plots at times when outputs are recorded
+                                      # so depends on self.record_frequency_years
+    self.plot_at_end_flag = True
     
     ##########
     # Output #
@@ -256,8 +263,9 @@ class IceFlow(object):
     else:
       pass # must have been defined by user
     tEnd = self.run_length_years*self.secyr # model run length [s]
-    self.t = np.arange(0, tEnd+self.dt/2., self.dt) # time vector [s]
-    self.record_timesteps = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years)
+    self.t = np.arange(0, tEnd+self.dt/10., self.dt) # time vector [s]
+    self.t_years = self.t / self.secyr
+    self.record_timesteps_years = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years)
     # Input elevation map
     if type(self.elevation) is not str and type(self.elevation):
       self.Zb_initial = self.elevation
@@ -280,7 +288,7 @@ class IceFlow(object):
     self.a_timestep = 0 # surface ablation record counter [a]
     self.c_timestep = 0 # surface accumulation record counter [a]
     self.outflow_timestep = 0 # domain outflow record counter [a]
-    self.time_series = np.zeros((len(self.record_timesteps),5)) # record of selected variables at selected time step [variable]  
+    self.time_series = np.zeros((len(self.record_timesteps_years),5)) # record of selected variables at selected time step [variable]  
     self.H_record = [] # List to record ice thicknes at time slices [m]
     self.Zb_record = [] # List to record bed elevation at time slices [m] -- important for isostasy, maybe in future if erosion is included
     self.dz_record = [] # change in bed elev (isostasy, etc.)
@@ -526,8 +534,8 @@ class IceFlow(object):
     self.c_timestep = self.c_timestep + np.sum(c*(self.H>0))*self.dx*self.dy*self.dt*self.rho # update time step surface accumulation (kg/a) 
       
   def record_model_parameters(self):
-    self.record_timesteps = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years) # time-steps to be record [a]
-    print 'model year:', '%10.1f' %(self.t[self.t_i_output]/self.secyr)
+    self.record_timesteps_years = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years) # time-steps to be record [a]
+    print 'model year:', '%10.1f' %(self.t[self.t_i]/self.secyr)
       # display current time step in command window [a]
     self.H_record.append(self.H)
       # record time step ice thickness field [m]
@@ -541,8 +549,8 @@ class IceFlow(object):
       # record time step deformational velocity field [m/a]
     self.b_record.append(self.b*self.secyr)
       # record mass balance [m/a]
-    self.t_record.append(self.t[self.t_i_output]/self.secyr)
-    #self.time_series[self.record_index,:] = np.hstack(( self.record_timesteps[self.record_index], \
+    self.t_record.append(self.t[self.t_i]/self.secyr)
+    #self.time_series[self.record_index,:] = np.hstack(( self.record_timesteps_years[self.record_index], \
     #                                          self.c_timestep/self.record_frequency_years, \
     #                                          self.a_timestep/self.record_frequency_years, \
     #                                          self.b_timestep/self.record_frequency_years, \
@@ -567,14 +575,13 @@ class IceFlow(object):
       # for graphical output at a later time
     
 
-  def plot(self):
+  def plot_at_end(self):
     """
     save == True: save figure images
     save == False: draw the plots on screen
     """
-    from matplotlib import pyplot as plt
 
-    plt.figure()
+    plt.figure(2)
     plt.imshow(self.H, interpolation='nearest')
     plt.colorbar()
     plt.title('Ice Thickness', fontsize=16)
@@ -582,6 +589,31 @@ class IceFlow(object):
       plt.savefig(self.output_figure)
       plt.close()
     plt.show()
+
+  def plot_during_run(self):
+    plt.clf()
+    if self.isostatic:
+      plt.subplot(321)
+      plt.imshow(self.H, interpolation='nearest')
+      plt.colorbar()
+      plt.subplot(322)
+      plt.imshow(dz, interpolation='nearest')
+      plt.colorbar()
+      plt.subplot(323)
+      plt.imshow(self.b * self.secyr * 1000., interpolation='nearest')
+      plt.colorbar()
+      plt.subplot(324)
+      plt.imshow(self.Zb - self.Zb_initial, interpolation='nearest')
+      plt.colorbar()
+      plt.subplot(325)
+      plt.imshow(self.dZsdy_jPhi, interpolation='nearest')
+      plt.colorbar()
+      plt.clim(-.2, .2)
+    else:
+      plt.imshow(self.H, interpolation='nearest')
+      plt.colorbar()
+    plt.title('Ice Thickness', fontsize=16)
+    plt.draw()
 
     """
     plt.figure()
