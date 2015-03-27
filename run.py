@@ -13,7 +13,7 @@ ic.useGRASS = True
 ic.location='Iceland'
 ic.gisbase = '/usr/local/src/grass7_trunk/dist.x86_64-unknown-linux-gnu'
 
-ic.run_length_years = 1000. # years
+ic.run_length_years = 20. # years
 ic.t_start_years = 0. # years
 ic.dt_years = 2.
 
@@ -44,7 +44,9 @@ ic.bcap = None
 # Set this up to automatically number IceFlow outputs using glob
 ic.output_filename=None
 ic.output_figure=None
-ic.plot_t_years = ic.run_length_years
+ic.plot_at_end=True
+ic.plot_t_years = None
+#ic.plot_t_years = ic.run_length_years
 
 self = ic
 
@@ -65,8 +67,6 @@ ic.Pa /= (1000. * ic.secyr)
 
 # RUN
 for self.t_i in self.t_all:
-  self.build_sparse_array()
-  self.solve_sparse_equation()
-  if self.t_i % self.plot_t_years == 0:
-    self.plot()
+  self.update()
+  self.output()
 
