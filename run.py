@@ -1,4 +1,4 @@
-import core as iceflow
+import iceflow
 ic = iceflow.IceFlow()
 
 import numpy as np
