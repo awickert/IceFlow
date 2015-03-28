@@ -31,6 +31,9 @@ class IceFlow(object):
       plt.show(block = False)
 
   def update(self):
+    if self.verbose:
+      print 'model year:', '%10.1f' %(self.t_years[self.t_i])
+      # display current time step in command window [a]
     self.build_sparse_array()
     self.solve_sparse_equation()
     self.output()
@@ -41,13 +44,15 @@ class IceFlow(object):
     At selected time steps t_i, record various model parameters, and, if so 
     desired, plot.
     """
-    print self.t_years[self.t_i]
-    print self.record_timesteps_years[self.record_index]
     if self.t_years[self.t_i] < \
       (self.record_timesteps_years[self.record_index] + self.dt/self.secyr/2.) \
       and self.t_years[self.t_i] >= \
       (self.record_timesteps_years[self.record_index] - self.dt/self.secyr/2.):
       self.record_model_parameters()
+      if not self.quiet:
+        print 'Recording snapshot at model year:', \
+              '%10.1f' %(self.t_years[self.t_i])
+        # display current time step in command window [a]
       if self.plot_during_run_flag:
         self.plot_during_run()
     
@@ -56,10 +61,12 @@ class IceFlow(object):
       self.update()
 
   def finalize(self):
-    print "***"
-    print "Model complete."
-    print self.t[-1]/self.secyr, "years elapsed"
-    print "***"
+    if not self.quiet:
+      print "***"
+      print "Model complete."
+      if not self.quiet:
+        print self.t_years[-1], "years elapsed"
+      print "***"
     if self.output_filename:
       self.save_output()
     if self.OutNameGRASS:
@@ -78,6 +85,14 @@ class IceFlow(object):
     self.t_start_years = None
     self.dt_years   = 0.25
     self.t_i = 0 # counter
+    
+    #############
+    # VERBOSITY #
+    #############
+    self.verbose = False
+    self.debug = False # Not used yet
+    self.quiet = False # If true, will set self.debug and self.verbose False
+                       # during initialize() step.
   
     ###################
     # Basic constants #
@@ -234,7 +249,8 @@ class IceFlow(object):
       pass
     else:
       if self.ymin is None:
-        print "Automatically setting undefined south value to 0"
+        if not self.quiet:
+          print "Automatically setting undefined south value to 0"
         self.ymin = 0
       self.s = self.ymin + self.dy/2.
       self.n = self.ymin + self.dy * self.Zb_initial.shape[0] - self.dy/2.
@@ -244,7 +260,8 @@ class IceFlow(object):
     else:
       if self.xmin is None:
         self.xmin = 0
-        print "Automatically setting undefined west value to 0"
+        if not self.quiet:
+          print "Automatically setting undefined west value to 0"
       self.w = self.xmin + self.dx/2.
       self.e = self.xmin + self.dx * self.Zb_initial.shape[1] - self.dy/2.
       x = np.arange(self.w, self.e + self.dx/10., self.dx)
@@ -263,7 +280,13 @@ class IceFlow(object):
     self.A = self.AoCold*np.exp(-self.QcCold/self.R/self.T) * (self.T < 263.5) + self.AoWarm*np.exp(-self.QcWarm/self.R/self.T) * (self.T >= 263.5) / self.secyr
     # Time
     if self.record_frequency_years is None:
-      self.record_frequency_years = np.min((self.run_length_years, 10.))
+      #self.record_frequency_years = np.min((self.run_length_years, 10.))
+      self.record_frequency_years = self.run_length_years / 10
+      if self.record_frequency_years == 0:
+        self.record_frequency_years = None # Then just don't record if it is 
+                                           # a run this short -- or at least
+                                           # make the user set the record 
+                                           # frequency
     else:
       pass # must have been defined by user
     tEnd = self.run_length_years*self.secyr # model run length [s]
@@ -285,6 +308,10 @@ class IceFlow(object):
     self.precip_lapse = self.precip_lapse_years/self.secyr # convert units of precipitation lapse rate [m/s/m]
     self.mu = self.melt_factor_days/86400. # convert units of melt factor [m/s/K]
     self.melt_season_length = self.melt_season_length_days * 86400.
+    # Verbosity
+    if self.quiet:
+      self.verbose = False
+      self.debug = False
     
   def initialize_output_lists(self):
     self.record_index = 0 # index of recorded selected time steps [unitless]
@@ -303,7 +330,8 @@ class IceFlow(object):
 
   def initialize_GRASS(self):
     if self.location:
-      print "Using GRASS location", self.location
+      if not self.quiet:
+        print "Using GRASS location", self.location
     else:
       sys.exit("Must define a GRASS GIS location.")
     # Implicitly 
@@ -327,7 +355,8 @@ class IceFlow(object):
       if self.dx and self.dy:
         self.gr.run_command('g.region', ewres=self.dx, nsres=self.dy)
       else:
-        print "dx and dy not both defined: not updating grid resolution."
+        if not self.quiet:
+          print "dx and dy not both defined: not updating grid resolution."
     self.gr.run_command('g.region', region='IceFlowRegion') # Save it
     
   def initialize_elevation_x_y_and_ice_grids_from_GRASS(self):
@@ -539,8 +568,6 @@ class IceFlow(object):
       
   def record_model_parameters(self):
     self.record_timesteps_years = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years) # time-steps to be record [a]
-    print 'model year:', '%10.1f' %(self.t[self.t_i]/self.secyr)
-      # display current time step in command window [a]
     self.H_record.append(self.H)
       # record time step ice thickness field [m]
     self.Zb_record.append(self.Zb.copy())
