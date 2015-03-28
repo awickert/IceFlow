@@ -4,6 +4,7 @@ IceFlow
 ***2D semi-implicit shallow ice approximation glacier model***
 * Implicit in space
 * Explicit in time
+
 IceFlow is a lightweight glacier model that runs quickly and therefore is approrpriate for paleo-glacier simulations. It can create realistic ice cap geometries over thousands to tens of thousands of years of model evolution in seconds to minutes on a laptop computer.
 
 ## History and Citation requests
