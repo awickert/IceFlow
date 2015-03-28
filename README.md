@@ -12,7 +12,7 @@ IceFlow is a lightweight glacier model that runs quickly and therefore is appror
 IceFlow was originally written by [Liam Colgan](http://www.williamcolgan.net/) in Matlab. In early 2014, it was translated into Python by Andy Wickert. Both Wickert and Colgan made improvements to their branches of the code, and this version does not yet include some of those made by Colgan.
 
 If you use this model in a scientific work, here is how you should cite it (not simple at the moment due to ongoing development of the first version).
-* Colgan and others have a paper on the Matlab version of the model in review; please [contact Liam](info@williamcolgan.net) about it. Even if you use my Python version, it is built on the original Matlab version, and I request that you reference Liam's work.
+* Colgan and others have a paper on the Matlab version of the model in review; please [contact Liam](mailto:info@williamcolgan.net) about it. Even if you use my Python version, it is built on the original Matlab version, and I request that you reference Liam's work.
 * Andy Wickert currently has no paper published about IceFlow. If you want to use it, please contact him about how to cite it. But take care, because this means that I am not finished writing the code yet!
 
 ## Download and Installation
