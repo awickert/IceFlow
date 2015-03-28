@@ -62,6 +62,8 @@ class IceFlow(object):
     print "***"
     if self.output_filename:
       self.save_output()
+    if self.OutNameGRASS:
+      self.saveGRASS()
     if self.plot_at_end_flag:
       self.plot_at_end()
     if self.plot_during_run_flag:
@@ -121,6 +123,8 @@ class IceFlow(object):
     self.output_filename='IceFlow_Output'
     # Leave blank for no output figure
     self.output_figure = 'IceThickness.png'
+    # GRASS GIS output?
+    self.OutNameGRASS = None
 
     ###########################
     # Basal surface elevaiton #
@@ -574,6 +578,18 @@ class IceFlow(object):
     np.save(output_filename, out_array) # save simulation output into a single .npy file that can be called on
       # for graphical output at a later time
     
+  def saveGRASS(self):
+    iceGA = garray.array()
+    iceGA[...] = self.H
+    iceGA.write(self.OutNameGRASS+'_Hice', overwrite=True)
+    iceGA[...] = self.uD
+    iceGA.write(self.OutNameGRASS+'_uDeformation', overwrite=True)
+    iceGA[...] = self.uS
+    iceGA.write(self.OutNameGRASS+'_uSliding', overwrite=True)
+    iceGA[...] = self.Zb
+    iceGA.write(self.OutNameGRASS+'_zBed', overwrite=True)
+    iceGA[...] = self.Zs
+    iceGA.write(self.OutNameGRASS+'_zSurface', overwrite=True)
 
   def plot_at_end(self):
     """
@@ -615,14 +631,3 @@ class IceFlow(object):
     plt.title('Ice Thickness', fontsize=16)
     plt.draw()
 
-    """
-    plt.figure()
-    plt.imshow(self.Zb, interpolation='nearest')
-    plt.colorbar()
-    plt.title('Elevation', fontsize=16)
-    if save:
-      plt.savefig('Topography.png')
-      plt.close()
-    else:
-      plt.show()
-    """
