@@ -19,10 +19,10 @@ ic.dt_years = 2
 
 ic.elevation = 'elev'
 
-ic.n = 792000
-ic.s = 240000
-ic.w = 108000
-ic.e = 868000
+ic.north = 792000
+ic.south = 240000
+ic.west = 108000
+ic.east = 868000
 ic.dx = 8000
 ic.dy = 8000
 
@@ -58,9 +58,9 @@ ic.isostatic = True
 ic.ElasticThickness = 'Te'
 # Bounding box for flexure
 ic.flex.west = -600000
-ic.flex.n = 1200000
-ic.flex.e = 1600000
-ic.flex.s = -200000
+ic.flex.north = 1200000
+ic.flex.east = 1600000
+ic.flex.south = -200000
 ic.flex.dx = 8000
 ic.flex.dy = 8000
 
@@ -68,16 +68,7 @@ ic.isostatic_response_time_scale = 100.
 
 ic.initialize()
 ic.Pa /= (1000. * ic.secyr)
-
-
-
 ic.run()
 ic.finalize()
-
-
-
-
-
-
 
 self = ic

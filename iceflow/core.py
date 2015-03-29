@@ -115,10 +115,10 @@ class IceFlow(object):
     if self.t_years[self.t_i] >= self.t_flexure_update:
       self.t_flexure_update += self.flexure_recalculation_frequency
       if type(self.flex.Te) == np.ndarray:
-        self.flex.qs[(self.s-self.flex.s)/self.flex.dy: \
-                     -(self.flex.n-self.n)/self.flex.dy, \
-                     (self.w-self.flex.west)/self.flex.dx: \
-                     -(self.flex.e-self.e)/self.flex.dx ] = \
+        self.flex.qs[(self.south-self.flex.south)/self.flex.dy: \
+                     -(self.flex.north-self.north)/self.flex.dy, \
+                     (self.west-self.flex.west)/self.flex.dx: \
+                     -(self.flex.east-self.east)/self.flex.dx ] = \
                                          (self.H - self.H0) * 917. * 9.8
       else:
         self.flex.qs = (self.H - self.H0) * 917. * 9.8
@@ -128,10 +128,10 @@ class IceFlow(object):
 
   def compute_isostatic_response(self):
     # exponential for small ts b/c of driving gradient getting smaller
-    equilibrium_deflection = self.flex.w[(self.s-self.flex.s)/self.flex.dy: \
-                                         -(self.flex.n-self.n)/self.flex.dy, \
-                                         (self.w-self.flex.west)/self.flex.dx: \
-                                         -(self.flex.e-self.e)/self.flex.dx]
+    equilibrium_deflection = self.flex.w[(self.south-self.flex.south)/self.flex.dy: \
+                                         -(self.flex.north-self.north)/self.flex.dy, \
+                                         (self.west-self.flex.west)/self.flex.dx: \
+                                         -(self.flex.east-self.east)/self.flex.dx]
     # THIS ASSUMES NO EROSION!!!!!!!!!!!!!!
     # AS IN, APPROACHES EQUILIBRIUM AS ZB-ZB_INITIAL
     self.dz = (equilibrium_deflection - \
@@ -167,7 +167,7 @@ class IceFlow(object):
     ########################################
     # Constants that we may what to change #
     ########################################
-    self.n_ice = 3 # flow law exponent [unitless]
+    self.nGlen = 3 # flow law exponent [unitless]
     # cold/warm ice creep activation energy [J/mol]
     self.QcCold = 60000.
     self.QcWarm = 139000.
@@ -287,7 +287,7 @@ class IceFlow(object):
     # Mass balance setup -- generic #
     #################################
     # Maximum mass balance -- this can be a grid or a scalar
-    self.bcap_per_year = 1.0
+    self.b_maximum_per_year = 1.0
     # PICK PARAMETERIZATION TYPE
     # Options:
     #   TP_PDD --> Temperature and Precipitation, PDD
@@ -322,7 +322,7 @@ class IceFlow(object):
     # These can be grids or constant values across the whole system
     self.ELA  = None
     self.dbdz_per_year = None
-    # (see above for bcap)
+    # (see above for b_maximum_per_year)
 
     ###################
     # Data comparison #
@@ -340,27 +340,27 @@ class IceFlow(object):
     # Glacier model domain -- must be projected coordinate system
     # Should be defined after a grid is defined
     # These bounds work for both GRASS and non-GRASS initializations
-    if self.n and self.s:
+    if self.north and self.south:
       pass
     else:
       if self.ymin is None:
         if not self.quiet:
           print "Automatically setting undefined south value to 0"
         self.ymin = 0
-      self.s = self.ymin + self.dy/2.
-      self.n = self.ymin + self.dy * self.Zb_initial.shape[0] - self.dy/2.
-      y = np.arange(self.s, self.n + self.dy/10., self.dy)
-    if self.w and self.e:
+      self.south = self.ymin + self.dy/2.
+      self.north = self.ymin + self.dy * self.Zb_initial.shape[0] - self.dy/2.
+      y = np.arange(self.south, self.north + self.dy/10., self.dy)
+    if self.west and self.east:
       pass
     else:
       if self.xmin is None:
         self.xmin = 0
         if not self.quiet:
           print "Automatically setting undefined west value to 0"
-      self.w = self.xmin + self.dx/2.
-      self.e = self.xmin + self.dx * self.Zb_initial.shape[1] - self.dy/2.
-      x = np.arange(self.w, self.e + self.dx/10., self.dx)
-    if self.w and self.e and self.n and self.s:
+      self.west = self.xmin + self.dx/2.
+      self.east = self.xmin + self.dx * self.Zb_initial.shape[1] - self.dy/2.
+      x = np.arange(self.west, self.east + self.dx/10., self.dx)
+    if self.west and self.east and self.north and self.south:
       pass
     else:
       self.x, self.y = np.meshgrid(x, y)
@@ -368,7 +368,7 @@ class IceFlow(object):
   def initialize_compute_variables(self):
     # Variable conversions from years to seconds
     self.C0 = self.C0_per_year / self.secyr
-    self.bcap = self.bcap_per_year / self.secyr
+    self.b_maximum = self.b_maximum_per_year / self.secyr
     self.dbdz = self.dbdz_per_year = self.secyr
     self.dt = self.dt_years*self.secyr # time step [s]
     # Combine cold and warm ice flow law parameters [/Pa3/a]
@@ -448,12 +448,12 @@ class IceFlow(object):
     from grass.script import array as garray
     self.gr = gr
     self.garray = garray
-    if self.n is None and self.s is None and self.w is None and self.e is None:
+    if self.north is None and self.south is None and self.west is None and self.east is None:
       pass
-    elif self.n is None or self.s is None or self.w is None or self.e is None:
+    elif self.north is None or self.south is None or self.west is None or self.east is None:
       sys.exit('Incomplete description of edge values')
     else:
-      self.gr.run_command('g.region', n=self.n, s=self.s, w=self.w, e=self.e)
+      self.gr.run_command('g.region', n=self.north, s=self.south, w=self.west, e=self.east)
       # Then apply the desired resolution.
       # This won't be *quite* a square grid, but will be close.
       if self.dx and self.dy:
@@ -564,7 +564,7 @@ class IceFlow(object):
       self.b = (c - a) # surface mass balance [m/s]
     elif self.mass_balance_parameterization == 'ELA':
       self.b = self.dbdz*(self.Zs-self.ela0)
-    self.b[self.b > self.bcap_per_year] = self.bcap_per_year
+    self.b[self.b > self.b_maximum_per_year] = self.b_maximum_per_year
     self.b /= self.secyr # No clue whether I was trying to do this or not -- looks like seconds are a go!
       
     self.HPh = np.hstack(( (self.H[:,1:]+self.H[:,:-1])/2., np.zeros((self.ny,1)) )) # ice thickness at node j,i+1(?) [m]
@@ -588,10 +588,10 @@ class IceFlow(object):
     tau_jPhi = -self.rho*self.g*self.H_jPhi*self.dZsdy_jPhi # driving stress at node j+1(?),i [Pa] - positive y direction
     tau_jMhi = -self.rho*self.g*self.H_jMhi*self.dZsdy_jMhi # driving stress at node j-1(?),i [Pa] - negative y direction
     
-    qPh = 2*self.A/(self.n_ice+2)*(self.rho*self.g*self.alphaPh)**(self.n_ice-1)*self.HPh**(self.n_ice+1)*tauPh # ice discharge at node j,i+1(?) [m2/s]
-    qMh = 2*self.A/(self.n_ice+2)*(self.rho*self.g*self.alphaMh)**(self.n_ice-1)*self.HMh**(self.n_ice+1)*tauMh # ice discharge at node j,i-1(?) [m2/s]
-    q_jPhi = 2*self.A/(self.n_ice+2)*(self.rho*self.g*self.alpha_jPhi)**(self.n_ice-1)*self.H_jPhi**(self.n_ice+1)*tau_jPhi # ice discharge at node j+1(?),i [m2/s]
-    q_jMhi = 2*self.A/(self.n_ice+2)*(self.rho*self.g*self.alpha_jMhi)**(self.n_ice-1)*self.H_jMhi**(self.n_ice+1)*tau_jMhi # ice discharge at node j-1(?),i [m2/s]
+    qPh = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alphaPh)**(self.nGlen-1)*self.HPh**(self.nGlen+1)*tauPh # ice discharge at node j,i+1(?) [m2/s]
+    qMh = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alphaMh)**(self.nGlen-1)*self.HMh**(self.nGlen+1)*tauMh # ice discharge at node j,i-1(?) [m2/s]
+    q_jPhi = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alpha_jPhi)**(self.nGlen-1)*self.H_jPhi**(self.nGlen+1)*tau_jPhi # ice discharge at node j+1(?),i [m2/s]
+    q_jMhi = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alpha_jMhi)**(self.nGlen-1)*self.H_jMhi**(self.nGlen+1)*tau_jMhi # ice discharge at node j-1(?),i [m2/s]
     
     self.uD = ( ((qPh/np.maximum(self.HPh,1E-8) + qMh/np.maximum(self.HMh,1E-8)) / 2.)**2 + ((q_jPhi/np.maximum(self.H_jPhi,1E-8) + q_jMhi/np.maximum(self.H_jMhi,1E-8)) / 2.)**2)**0.5 # absolute depth-averaged deformational velocity at node j,i [m/s]
 
@@ -703,7 +703,7 @@ class IceFlow(object):
     self.flex.PlateSolutionType = 'vWC1994'
     self.flex.Solver = 'direct'
     self.flex.g = 9.8 # acceleration due to gravity
-    self.flex.E = 65E10 # Young's Modulus
+    self.flex.E = 65E9 # Young's Modulus
     self.flex.nu = 0.25 # Poisson's Ratio
     self.flex.rho_m = 3300. # MantleDensity
     self.flex.rho_fill = 0. # InfiillMaterialDensity
@@ -711,10 +711,10 @@ class IceFlow(object):
     self.flex.BC_E = '0Displacement0Slope' # east boundary condition
     self.flex.BC_S = '0Displacement0Slope' # south boundary condition
     self.flex.BC_N = '0Displacement0Slope' # north boundary condition
-    self.flex.n = None
-    self.flex.s = None
+    self.flex.north = None
+    self.flex.south = None
     self.flex.west = None
-    self.flex.e = None
+    self.flex.east = None
     self.flex.dx = None
     self.flex.dy = None
 
@@ -732,8 +732,8 @@ class IceFlow(object):
             self.flex.dx = reg['ewres']
           if self.flex.dy is None:
             self.flex.dy = reg['nsres']
-          self.gr.run_command('g.region', n=self.flex.n, s=self.flex.s, \
-                              w=self.flex.west, e=self.flex.e, \
+          self.gr.run_command('g.region', n=self.flex.north, s=self.flex.south, \
+                              w=self.flex.west, e=self.flex.east, \
                               nsres=self.flex.dy, ewres=self.flex.dx )
           self.gr.run_command('g.region', save='IceFlow_gFlexTe', overwrite=True)
           Tegrid = self.garray.array()
