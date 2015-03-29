@@ -13,7 +13,7 @@ ic.useGRASS = True
 ic.location='Iceland'
 ic.gisbase = '/usr/local/src/grass7_trunk/dist.x86_64-unknown-linux-gnu'
 
-ic.run_length_years = 3000. # years
+ic.run_length_years = 300. # years
 ic.t_start_years = 0. # years
 ic.dt_years = 2
 
@@ -23,8 +23,8 @@ ic.n = 792000
 ic.s = 240000
 ic.w = 108000
 ic.e = 868000
-ic.dx = 4000
-ic.dy = 4000
+ic.dx = 8000
+ic.dy = 8000
 
 ic.mass_balance_parameterization = 'TP_PDD'
 # Goes to Ta variable
@@ -54,16 +54,19 @@ ic.verbose = True
 
 # Flexure
 ic.isostatic = True
-ic.ElasticThickness = 20000
+#ic.ElasticThickness = 20000
+ic.ElasticThickness = 'Te'
 # Bounding box for flexure
-ic.flex.w = -600000
+ic.flex.west = -600000
 ic.flex.n = 1200000
 ic.flex.e = 1600000
 ic.flex.s = -200000
+ic.flex.dx = 8000
+ic.flex.dy = 8000
 
-print ic.isostatic
+ic.isostatic_response_time_scale = 100.
+
 ic.initialize()
-print ic.isostatic
 ic.Pa /= (1000. * ic.secyr)
 
 

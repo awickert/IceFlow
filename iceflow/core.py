@@ -114,11 +114,11 @@ class IceFlow(object):
   def update_isostatic_response(self):
     if self.t_years[self.t_i] >= self.t_flexure_update:
       self.t_flexure_update += self.flexure_recalculation_frequency
-      if type(self.flex.Te) == np.array:
+      if type(self.flex.Te) == np.ndarray:
         self.flex.qs[(self.s-self.flex.s)/self.flex.dy: \
-                 -(self.flex.n-self.n)/self.flex.dy, \
-                 (self.w-self.flex.w)/self.flex.dx: \
-                 -(self.flex.e-self.e)/self.flex.dx] = \
+                     -(self.flex.n-self.n)/self.flex.dy, \
+                     (self.w-self.flex.west)/self.flex.dx: \
+                     -(self.flex.e-self.e)/self.flex.dx ] = \
                                          (self.H - self.H0) * 917. * 9.8
       else:
         self.flex.qs = (self.H - self.H0) * 917. * 9.8
@@ -128,10 +128,14 @@ class IceFlow(object):
 
   def compute_isostatic_response(self):
     # exponential for small ts b/c of driving gradient getting smaller
-    # equilibrium_deflection = self.flex.w
+    equilibrium_deflection = self.flex.w[(self.s-self.flex.s)/self.flex.dy: \
+                                         -(self.flex.n-self.n)/self.flex.dy, \
+                                         (self.w-self.flex.west)/self.flex.dx: \
+                                         -(self.flex.e-self.e)/self.flex.dx]
     # THIS ASSUMES NO EROSION!!!!!!!!!!!!!!
     # AS IN, APPROACHES EQUILIBRIUM AS ZB-ZB_INITIAL
-    self.dz = (self.flex.w - (self.Zb - self.Zb_initial)) * self.dt_years / \
+    self.dz = (equilibrium_deflection - \
+               (self.Zb - self.Zb_initial)) * self.dt_years / \
                self.isostatic_response_time_scale
     self.Zb += self.dz
 
@@ -709,7 +713,7 @@ class IceFlow(object):
     self.flex.BC_N = '0Displacement0Slope' # north boundary condition
     self.flex.n = None
     self.flex.s = None
-    self.flex.w = None
+    self.flex.west = None
     self.flex.e = None
     self.flex.dx = None
     self.flex.dy = None
@@ -722,9 +726,20 @@ class IceFlow(object):
     if type(self.ElasticThickness) == str:
       if self.useGRASS:
         try:
-          Tegrid = garray.array()
+          self.gr.run_command('g.region', rast=self.ElasticThickness)
+          reg = self.gr.region()
+          if self.flex.dx is None:
+            self.flex.dx = reg['ewres']
+          if self.flex.dy is None:
+            self.flex.dy = reg['nsres']
+          self.gr.run_command('g.region', n=self.flex.n, s=self.flex.s, \
+                              w=self.flex.west, e=self.flex.e, \
+                              nsres=self.flex.dy, ewres=self.flex.dx )
+          self.gr.run_command('g.region', save='IceFlow_gFlexTe', overwrite=True)
+          Tegrid = self.garray.array()
           Tegrid.read(self.ElasticThickness)
           self.flex.Te = np.array(Tegrid)
+          self.gr.run_command('g.region', region='IceFlowRegion')
         except:
           pass
       else:
@@ -734,25 +749,17 @@ class IceFlow(object):
       self.flex.Te = self.ElasticThickness
     else:
       sys.exit("No defined Te")
-    if type(self.flex.Te) == np.array:
-      if self.useGRASS:
-        self.gr.run_command('g.region', rast=self.ElasticThickness)
-        self.gr.run_command('g.region', save='IceFlow_gFlexTe', overwrite=True)
-        reg = gr.region()
-        self.gr.run_command('g.region', region='IceFlowRegion')
-        if self.flex.dx is None:
-          self.flex.dx = reg['ewres']
-          self.flex.dy = reg['nsres']
-      else:
-        sys.exit() # placeholder
-    else:
+    if type(self.flex.Te) != np.ndarray:
       # For constant Te -- of they are not defined
       if self.flex.dx is None:
         self.flex.dx = self.dx
         self.flex.dy = self.dy
     
     # Starting loads -- assume 0
-    self.flex.qs = 0 * self.H0
+    if type(self.flex.Te) == np.ndarray:
+      self.flex.qs = 0 * self.flex.Te
+    else:
+      self.flex.qs = 0 * self.H0
     
     # Initialize at last
     self.flex.initialize()
