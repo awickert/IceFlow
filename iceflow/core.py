@@ -10,6 +10,12 @@ class IceFlow(object):
 
   def __init__(self):
     self.add_default_variable_values()
+    # Need to put defaults here, but can't stop user from running the model
+    # if gFlex is not installed
+    try:
+      self.start_gflex_and_assign_default_variables()
+    except:
+      pass
     
   def initialize(self):
     self.initialize_define_region()
@@ -22,18 +28,25 @@ class IceFlow(object):
         self.basic_mass_balance_with_GRASS()
     else:
       print "No mass balance methods without GRASS created yet!"
+    if self.isostatic:
+      self.initialize_isostatic()
     self.initialize_compute_variables()
     self.initialize_output_lists()
     self.enforce_boundary_conditions()
     self.initialize_sparse_array()
     if self.plot_during_run_flag:
-      plt.figure(1)
+      if self.isostatic:
+        plt.figure(1, figsize=(12,12))
+      else:
+        plt.figure(1)
       plt.show(block = False)
 
   def update(self):
     if self.verbose:
       # display current time step in command window [a]
       print 'model year:', '%10.1f' %(self.t_years[self.t_i])
+    if self.isostatic:
+      self.update_isostatic_response()
     self.build_sparse_array()
     self.solve_sparse_equation()
     self.output()
@@ -97,6 +110,31 @@ class IceFlow(object):
     if self.plot_during_run_flag:
       plt.figure(1)
       plt.show(block = True)
+      
+  def update_isostatic_response(self):
+    if self.t_years[self.t_i] >= self.t_flexure_update:
+      self.t_flexure_update += self.flexure_recalculation_frequency
+      if type(self.flex.Te) == np.array:
+        self.flex.qs[(self.s-self.flex.s)/self.flex.dy: \
+                 -(self.flex.n-self.n)/self.flex.dy, \
+                 (self.w-self.flex.w)/self.flex.dx: \
+                 -(self.flex.e-self.e)/self.flex.dx] = \
+                                         (self.H - self.H0) * 917. * 9.8
+      else:
+        self.flex.qs = (self.H - self.H0) * 917. * 9.8
+      self.flex.run()
+      self.flex.finalize()
+      self.compute_isostatic_response()
+
+  def compute_isostatic_response(self):
+    # exponential for small ts b/c of driving gradient getting smaller
+    # equilibrium_deflection = self.flex.w
+    # THIS ASSUMES NO EROSION!!!!!!!!!!!!!!
+    # AS IN, APPROACHES EQUILIBRIUM AS ZB-ZB_INITIAL
+    self.dz = (self.flex.w - (self.Zb - self.Zb_initial)) * self.dt_years / \
+               self.isostatic_response_time_scale
+    print np.max(self.dz)
+    self.Zb += self.dz
 
   def add_default_variable_values(self):
     ############
@@ -141,7 +179,15 @@ class IceFlow(object):
     # Using an elastic lithosphere with a response time scale
     # See paper showing that this is the best approximation to a true global model!!!!!!!!!!!!!!
     # <-----------------------------------------------------------------------------TO DO
-    flexure_time_scale = 1E-20 # instantaneous
+    # Response time scale
+    self.isostatic_response_time_scale = 4000. # [yr]
+    # Elastic thickness -- string (filename or GRASS raster) or float
+    self.ElasticThickness = None # [m]
+    # How often to recalculate flexural response
+    self.flexure_recalculation_frequency = 100 # [yr]
+    # First time to apply flexural correction (this becomes a condition
+    # for the update and changes through the run)
+    self.t_flexure_update = 0 # [yr]
     
     #############
     # Plotting? #
@@ -367,7 +413,6 @@ class IceFlow(object):
     if self.GRASS_raster_ice_extent:
       self.ModelOutsideData_FractOfIceAreaFromData = []
       self.DataOutsideModel_FractOfIceAreaFromData = []
-
     
   def initialize_output_lists(self):
     self.record_index = 0 # index of recorded selected time steps [unitless]
@@ -413,7 +458,7 @@ class IceFlow(object):
       else:
         if not self.quiet:
           print "dx and dy not both defined: not updating grid resolution."
-    self.gr.run_command('g.region', region='IceFlowRegion') # Save it
+    self.gr.run_command('g.region', save='IceFlowRegion', overwrite=True) # Save it
     
   def initialize_elevation_x_y_and_ice_grids_from_GRASS(self):
     """
@@ -440,6 +485,10 @@ class IceFlow(object):
     # And ice array, if applicable
     if self.StartingIce:
       self.H0.read(self.StartingIce)
+    else:
+      self.H0[...] = 0
+    # At start, H = H0
+    self.H = self.H0.copy()
 
   def initialize_climate_from_GRASS(self):
     """
@@ -643,6 +692,72 @@ class IceFlow(object):
     self.DataOutsideModel_FractOfIceAreaFromData.append( \
          ice_margins_farther_than_model/float(measured_ice_extent_cells))
   
+  def start_gflex_and_assign_default_variables(self):
+    import gflex
+    self.flex = gflex.F2D()
+    self.flex.Quiet = False
+    self.flex.Method = 'FD'
+    self.flex.PlateSolutionType = 'vWC1994'
+    self.flex.Solver = 'direct'
+    self.flex.g = 9.8 # acceleration due to gravity
+    self.flex.E = 65E10 # Young's Modulus
+    self.flex.nu = 0.25 # Poisson's Ratio
+    self.flex.rho_m = 3300. # MantleDensity
+    self.flex.rho_fill = 0. # InfiillMaterialDensity
+    self.flex.BC_W = '0Displacement0Slope' # west boundary condition
+    self.flex.BC_E = '0Displacement0Slope' # east boundary condition
+    self.flex.BC_S = '0Displacement0Slope' # south boundary condition
+    self.flex.BC_N = '0Displacement0Slope' # north boundary condition
+    self.flex.n = None
+    self.flex.s = None
+    self.flex.w = None
+    self.flex.e = None
+    self.flex.dx = None
+    self.flex.dy = None
+
+  def initialize_isostatic(self):
+    """
+    Get gFlex going with standard selections for variables
+    (can be overwritten by user)
+    """
+    if type(self.ElasticThickness) == str:
+      if self.useGRASS:
+        try:
+          Tegrid = garray.array()
+          Tegrid.read(self.ElasticThickness)
+          self.flex.Te = np.array(Tegrid)
+        except:
+          pass
+      else:
+        sys.exit("Variable Te only works with GRASS")
+    elif (type(self.ElasticThickness) == float) or \
+         (type(self.ElasticThickness) == int):
+      self.flex.Te = self.ElasticThickness
+    else:
+      sys.exit("No defined Te")
+    if type(self.flex.Te) == np.array:
+      if self.useGRASS:
+        self.gr.run_command('g.region', rast=self.ElasticThickness)
+        self.gr.run_command('g.region', save='IceFlow_gFlexTe', overwrite=True)
+        reg = gr.region()
+        self.gr.run_command('g.region', region='IceFlowRegion')
+        if self.flex.dx is None:
+          self.flex.dx = reg['ewres']
+          self.flex.dy = reg['nsres']
+      else:
+        sys.exit() # placeholder
+    else:
+      # For constant Te -- of they are not defined
+      if self.flex.dx is None:
+        self.flex.dx = self.dx
+        self.flex.dy = self.dy
+    
+    # Starting loads -- assume 0
+    self.flex.qs = 0 * self.H0
+    
+    # Initialize at last
+    self.flex.initialize()
+
   def record_model_parameters(self):
     self.record_timesteps_years = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years) # time-steps to be record [a]
     self.H_record.append(self.H)
@@ -725,22 +840,18 @@ class IceFlow(object):
   def plot_during_run(self):
     plt.clf()
     if self.isostatic:
-      plt.subplot(321)
+      plt.subplot(221)
       plt.imshow(self.H, interpolation='nearest')
       plt.colorbar()
-      plt.subplot(322)
-      plt.imshow(dz, interpolation='nearest')
+      plt.subplot(222)
+      plt.imshow(self.dz, interpolation='nearest')
       plt.colorbar()
-      plt.subplot(323)
+      plt.subplot(223)
       plt.imshow(self.b * self.secyr * 1000., interpolation='nearest')
       plt.colorbar()
-      plt.subplot(324)
+      plt.subplot(224)
       plt.imshow(self.Zb - self.Zb_initial, interpolation='nearest')
       plt.colorbar()
-      plt.subplot(325)
-      plt.imshow(self.dZsdy_jPhi, interpolation='nearest')
-      plt.colorbar()
-      plt.clim(-.2, .2)
     else:
       plt.imshow(self.H, interpolation='nearest')
       plt.colorbar()
