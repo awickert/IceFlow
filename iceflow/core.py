@@ -32,27 +32,48 @@ class IceFlow(object):
 
   def update(self):
     if self.verbose:
-      print 'model year:', '%10.1f' %(self.t_years[self.t_i])
       # display current time step in command window [a]
+      print 'model year:', '%10.1f' %(self.t_years[self.t_i])
     self.build_sparse_array()
     self.solve_sparse_equation()
     self.output()
     self.t_i += 1
 
-  def output(self):
+  def output_time(self):
     """
-    At selected time steps t_i, record various model parameters, and, if so 
-    desired, plot.
+    Checks if the time step is appropriate to write output, generate plots, 
+    compare models against data, or do any as-of-yet-unknown additional 
+    operations
     """
     if self.t_years[self.t_i] < \
       (self.record_timesteps_years[self.record_index] + self.dt/self.secyr/2.) \
       and self.t_years[self.t_i] >= \
       (self.record_timesteps_years[self.record_index] - self.dt/self.secyr/2.):
       self.record_model_parameters()
+      outbool = True
+    else:
+      outbool = False
+    return outbool
+    
+  def output(self):
+    """
+    At selected time steps t_i, record various model parameters, and, if so 
+    desired, plot.
+    """
+    if self.output_time():
       if not self.quiet:
+        # display current time step in command window [a]
         print 'Recording snapshot at model year:', \
               '%10.1f' %(self.t_years[self.t_i])
-        # display current time step in command window [a]
+      if self.GRASS_raster_ice_extent:
+        self.compare_with_ice_extent_GRASS_raster()
+        if self.verbose:
+          print "Model extent outside data region [%]:", \
+                self.ModelOutsideData_FractOfIceAreaFromData[-1] * 100
+          print "Data extent outside model region [%]:", \
+                self.DataOutsideModel_FractOfIceAreaFromData[-1] * 100
+      if self.record_model_parameters_flag:
+        self.record_model_parameters()
       if self.plot_during_run_flag:
         self.plot_during_run()
     
@@ -134,6 +155,19 @@ class IceFlow(object):
     ##########
     # Interval over which to record output [years]
     self.record_frequency_years = None
+    # Interval over which to compare against data [years]
+    # Will default to the same interval
+    # And currentlly does not matter
+    self.data_comparison_frequency_years = None # CURRENTLY NOT IMPLEMENTED!
+                                                # can set it but data comparison
+                                                # time interval tied to
+                                                # self.record_frequency_years
+                                                # (and this defaults to that
+                                                # as well)
+    # Flag to save model parameters
+    self.record_model_parameters_flag = False
+    # Flag to save misfits from data-model comparison
+    self.data_comparison_frequency_years_flag = False
     # Output filename -- set to None if you do not want to save ouptput
     self.output_filename='IceFlow_Output'
     # Leave blank for no output figure
@@ -241,6 +275,18 @@ class IceFlow(object):
     self.dbdz_per_year = None
     # (see above for bcap)
 
+    ###################
+    # Data comparison #
+    ###################
+    self.compare_at_intermediate_time_steps = True 
+    self.GRASS_raster_ice_extent = None # Name of GRASS raster map with ice
+                                        # extent from data
+    # Very preliminary ideas on how to do the rest
+    self.GRASS_vector_ice_extent = None # Not yet implemented
+    self.GRASS_moraine_ages = None # Not yet implemented
+    self.GRASS_glacial_polish_ages = None # Not yet implemented.
+    
+
   def initialize_define_region(self):
     # Glacier model domain -- must be projected coordinate system
     # Should be defined after a grid is defined
@@ -287,6 +333,11 @@ class IceFlow(object):
                                            # a run this short -- or at least
                                            # make the user set the record 
                                            # frequency
+    if self.data_comparison_frequency_years is None \
+        and self.data_comparison_frequency_years is not None:
+      # I guess the "not none" is redundant
+      self.data_comparison_frequency_years = self.record_frequency_years
+
     else:
       pass # must have been defined by user
     tEnd = self.run_length_years*self.secyr # model run length [s]
@@ -312,6 +363,11 @@ class IceFlow(object):
     if self.quiet:
       self.verbose = False
       self.debug = False
+    # output data--model comparison lists
+    if self.GRASS_raster_ice_extent:
+      self.ModelOutsideData_FractOfIceAreaFromData = []
+      self.DataOutsideModel_FractOfIceAreaFromData = []
+
     
   def initialize_output_lists(self):
     self.record_index = 0 # index of recorded selected time steps [unitless]
@@ -565,7 +621,28 @@ class IceFlow(object):
     self.b_timestep = self.b_timestep + np.sum(self.b*(self.H>0))*self.dx*self.dy*self.dt*self.rho # update time step surface mass balance (kg/a)
     self.a_timestep = self.a_timestep + np.sum(a*(self.H>0))*self.dx*self.dy*self.dt*self.rho # update time step surface ablation (kg/a)
     self.c_timestep = self.c_timestep + np.sum(c*(self.H>0))*self.dx*self.dy*self.dt*self.rho # update time step surface accumulation (kg/a) 
-      
+  
+  def compare_with_ice_extent_GRASS_raster(self):
+    iceExtentData = self.garray.array()
+    iceExtentData.read(self.GRASS_raster_ice_extent) # Must be binary mask of 1 (ice) and 
+                                          # 0 (not ice)
+    modelice = self.H > 1. # Just set a 1-meter limit to the ice thickness
+                           # to define ice extent
+                           # Might use slope-based subgrid methods in the future
+    comparison = modelice + iceExtentData
+    non_overlap = np.sum(comparison == 1) # number of cells that are ice in the 
+                                          # model but are not in the data or
+                                          # vice versa (are ice in the data 
+                                          # but not in the model
+    overlap_grid = modelice * iceExtentData
+    model_farther_than_ice_margins = np.sum(modelice - overlap_grid)
+    ice_margins_farther_than_model = np.sum(iceExtentData - overlap_grid)
+    measured_ice_extent_cells = np.sum(iceExtentData) # could take this outside
+    self.ModelOutsideData_FractOfIceAreaFromData.append( \
+         model_farther_than_ice_margins/float(measured_ice_extent_cells))
+    self.DataOutsideModel_FractOfIceAreaFromData.append( \
+         ice_margins_farther_than_model/float(measured_ice_extent_cells))
+  
   def record_model_parameters(self):
     self.record_timesteps_years = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years) # time-steps to be record [a]
     self.H_record.append(self.H)
@@ -599,11 +676,23 @@ class IceFlow(object):
       # reset domain outflow counter [a]
 
   def save_output(self):
-    out_array = (self.H_record,self.Zb_record,self.uD_record,self.uS_record,self.b_record,self.t_record,
-      self.time_series,self.T,self.A,self.C0,self.x,self.y,self.Zb,self.BC,self.T_correction,\
-      self.P_factor,self.mu,self.dx,self.dy)
-    np.save(output_filename, out_array) # save simulation output into a single .npy file that can be called on
-      # for graphical output at a later time
+    """
+    save simulation output into a single .npy file that can be called on
+    for graphical output at a later time
+    
+    Also save outputs of data--model comparison, if available
+    """
+    # State variables
+    out_arrays = (self.H_record, self.Zb_record, self.uD_record, \
+                  self.uS_record, self.b_record, self.t_record, \
+                  self.time_series, self.T, self.A, self.C0, self.x, self.y, \
+                  self.Zb, self.BC, self.T_correction, \
+                  self.P_factor, self.mu, self.dx, self.dy)
+    np.save(output_filename, out_arrays)
+    # Data -- model comparison
+    data_model_comparison = (self.ModelOutsideData_FractOfIceAreaFromData, \
+                             self.DataOutsideModel_FractOfIceAreaFromData )
+    np.save(output_filename + '_DataComparison', data_model_comparison)
     
   def saveGRASS(self):
     iceGA = garray.array()

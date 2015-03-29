@@ -13,9 +13,9 @@ ic.useGRASS = True
 ic.location='Iceland'
 ic.gisbase = '/usr/local/src/grass7_trunk/dist.x86_64-unknown-linux-gnu'
 
-ic.run_length_years = 200. # years
+ic.run_length_years = 3000. # years
 ic.t_start_years = 0. # years
-ic.dt_years = 2.
+ic.dt_years = 2
 
 ic.elevation = 'elev'
 
@@ -47,6 +47,10 @@ ic.output_figure=None
 ic.plot_at_end_flag=False
 ic.plot_during_run_flag = True
 #ic.plot_t_years = ic.run_length_years
+
+ic.GRASS_raster_ice_extent = 'FakeMeasuredExtents'
+
+ic.verbose = True
 
 ic.initialize()
 ic.Pa /= (1000. * ic.secyr)
