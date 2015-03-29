@@ -13,7 +13,7 @@ ic.useGRASS = True
 ic.location='Iceland'
 ic.gisbase = '/usr/local/src/grass7_trunk/dist.x86_64-unknown-linux-gnu'
 
-ic.run_length_years = 300. # years
+ic.run_length_years = 3000. # years
 ic.t_start_years = 0. # years
 ic.dt_years = 2
 
@@ -39,7 +39,7 @@ ic.P_factor = 1
 
 ic.ELA = None
 ic.dbdz = None
-ic.bcap = None
+ic.b_maximum_per_year = 1
 
 # Set this up to automatically number IceFlow outputs using glob
 ic.output_filename=None
@@ -47,16 +47,18 @@ ic.output_figure=None
 ic.plot_at_end_flag=False
 ic.plot_during_run_flag = True
 #ic.plot_t_years = ic.run_length_years
+ic.boundary_condition = 'Neumann0'
 
 ic.GRASS_raster_ice_extent = 'FakeMeasuredExtents'
 
-ic.verbose = True
+ic.verbose = False
 
 # Flexure
 ic.isostatic = True
 #ic.ElasticThickness = 20000
 ic.ElasticThickness = 'Te'
 # Bounding box for flexure
+ic.flex.Quiet=True
 ic.flex.west = -600000
 ic.flex.north = 1200000
 ic.flex.east = 1600000
