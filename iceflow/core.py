@@ -47,10 +47,18 @@ class IceFlow(object):
     if self.verbose:
       # display current time step in command window [a]
       print 'model year:', '%10.1f' %(self.t_years[self.t_i])
-    if self.isostatic:
-      self.update_isostatic_response()
-    self.build_sparse_array()
-    self.solve_sparse_equation()
+    self.compute_mass_balance()
+    # Clunky way to make sure that the model saves an initial time step
+    # without adding ice or doing an unnecessary flexural calculation
+    if self.t_years[self.t_i] > self.t_years[0]:
+      self.build_sparse_array()
+      self.solve_sparse_equation()
+      if self.isostatic:
+        self.update_isostatic_response()
+    else:
+      # Prep output variables as 0's for first time step
+      self.uS = 0 * self.H
+      self.uD = 0 * self.H
     self.output()
     self.t_i += 1
 
@@ -134,7 +142,7 @@ class IceFlow(object):
         # New interpolation method -- any dx, any grid
         dHinterp_fcn = RectBivariateSpline( self.x, self.y, 
                                             (self.H - self.H0).transpose() )
-        dHinterp = dHinterp_fcn(self.flex.xcenter, self.flex.ycenter).transpose()
+        dHinterp = dHinterp_fcn(self.flex.x, self.flex.y).transpose()
         # Set everything to 0 outside of ice model domain
         dHinterp_mask = (self.flex.Y <= self.north) * \
                         (self.flex.Y >= self.south) * \
@@ -159,7 +167,7 @@ class IceFlow(object):
     # New interpolation method -- any dx, any grid
     # Probably downscaling here -- coarser grid allowed due to low-pass
     # filtering of flexure
-    winterp_fcn = RectBivariateSpline( self.flex.xcenter, self.flex.ycenter, \
+    winterp_fcn = RectBivariateSpline( self.flex.x, self.flex.y, \
                                        self.flex.w.transpose() )
     equilibrium_deflection = winterp_fcn(self.x, self.y).transpose()
     # THIS ASSUMES NO EROSION!!!!!!!!!!!!!!
@@ -595,7 +603,7 @@ class IceFlow(object):
     self.H = self.H0.copy() # ice thickness at node j,i [m] 
     self.Zs = self.Zb + self.H # ice surface elevation at node j,i [m]
     
-  def build_sparse_array(self):
+  def compute_mass_balance(self):
     # calculate ice form and flow variables:
     self.Zs = self.Zb + self.H # ice surface elevation at node j,i [m]
     if self.mass_balance_parameterization == 'TP_PDD':
@@ -607,7 +615,9 @@ class IceFlow(object):
       self.b = self.dbdz*(self.Zs-self.ela0)
     self.b[self.b > self.b_maximum_per_year] = self.b_maximum_per_year
     self.b /= self.secyr # No clue whether I was trying to do this or not -- looks like seconds are a go!
-      
+
+  def build_sparse_array(self):
+
     self.HPh = np.hstack(( (self.H[:,1:]+self.H[:,:-1])/2., np.zeros((self.ny,1)) )) # ice thickness at node j,i+1(?) [m]
     self.HMh = np.hstack(( np.zeros((self.ny,1)), (self.H[:,1:] + self.H[:,:-1])/2. )) # ice thickness at node j,i-1(?) [m]
     self.H_jPhi = np.vstack(( (self.H[1:,:]+self.H[:-1,:])/2., np.zeros((1,self.nx)) )) # ice thickness at node j+1(?),i [m]
@@ -732,9 +742,9 @@ class IceFlow(object):
     ice_margins_farther_than_model = np.sum(iceExtentData - overlap_grid)
     measured_ice_extent_cells = np.sum(iceExtentData) # could take this outside
     self.ModelOutsideData_FractOfIceAreaFromData.append( \
-         model_farther_than_ice_margins/float(measured_ice_extent_cells))
+         float(model_farther_than_ice_margins/float(measured_ice_extent_cells)))
     self.DataOutsideModel_FractOfIceAreaFromData.append( \
-         ice_margins_farther_than_model/float(measured_ice_extent_cells))
+         float(ice_margins_farther_than_model/float(measured_ice_extent_cells)))
   
   def start_gflex_and_assign_default_variables(self):
     import gflex
@@ -803,11 +813,11 @@ class IceFlow(object):
       self.flex.qs = 0 * self.H0
       
     # Grid on-cell-centers for Te
-    self.flex.xcenter = np.arange(self.flex.west + self.flex.dx/2., \
+    self.flex.x = np.arange(self.flex.west + self.flex.dx/2., \
                                   self.flex.east, self.flex.dx)
-    self.flex.ycenter = np.arange(self.flex.south + self.flex.dy/2., \
+    self.flex.y = np.arange(self.flex.south + self.flex.dy/2., \
                                   self.flex.north, self.flex.dy)
-    self.flex.X, self.flex.Y = np.meshgrid(self.flex.xcenter, self.flex.ycenter)
+    self.flex.X, self.flex.Y = np.meshgrid(self.flex.x, self.flex.y)
     
     # Initialize at last
     self.flex.initialize()
@@ -888,6 +898,7 @@ class IceFlow(object):
     with warnings.catch_warnings(record=True) as warning_messages:
       plt.colorbar()
     plt.title('Ice Thickness', fontsize=16)
+    plt.tight_layout()
     if self.output_figure:
       plt.savefig(self.output_figure)
       plt.close()
@@ -921,6 +932,6 @@ class IceFlow(object):
       with warnings.catch_warnings(record=True) as warning_messages:
         plt.colorbar()
       plt.title('Ice Thickness', fontsize=16)
-    plt.tight_layout()
+    #plt.tight_layout()
     plt.draw()
 
