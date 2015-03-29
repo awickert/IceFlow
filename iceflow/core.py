@@ -33,6 +33,7 @@ class IceFlow(object):
     if self.isostatic:
       self.initialize_isostatic()
     self.initialize_compute_variables()
+    self.initialize_import_grids()
     self.initialize_output_lists()
     self.enforce_boundary_conditions()
     self.initialize_sparse_array()
@@ -42,25 +43,45 @@ class IceFlow(object):
       else:
         plt.figure(1)
       plt.show(block = False)
+    self.year_now = self.t_years[self.t_i] # 0
 
   def update(self):
     if self.verbose:
       # display current time step in command window [a]
-      print 'model year:', '%10.1f' %(self.t_years[self.t_i])
+      print 'model year:', '%10.1f' %(self.year_now)
     self.compute_mass_balance()
     # Clunky way to make sure that the model saves an initial time step
     # without adding ice or doing an unnecessary flexural calculation
-    if self.t_years[self.t_i] > self.t_years[0]:
+    if self.year_now > self.t_years[0]:
       self.build_sparse_array()
       self.solve_sparse_equation()
       if self.isostatic:
         self.update_isostatic_response()
+      if self.dt_is_variable:
+        self.update_dt()
     else:
       # Prep output variables as 0's for first time step
       self.uS = 0 * self.H
       self.uD = 0 * self.H
     self.output()
     self.t_i += 1
+    if self.dt_is_variable:
+      self.year_now += self.dt_years
+    else:
+      self.year_now = self.t_years[self.t_i] # 0
+
+  def update_dt(self):
+    # 0 factor of safety
+    self.dt_years = np.min((self.dx, self.dy))**2 / (2 * self.meanD * self.secyr)
+    print self.dt_years
+    # But at least have a maximum value!
+    # Nope -- switched to mean.
+    if self.dt_years > self.dt_max or np.isnan(self.dt_years) \
+       or np.isinf(self.dt_years):
+      self.dt_years = self.dt_max
+    self.dt = self.dt_years * self.secyr
+    if self.verbose:
+      print "dt (years):", self.dt_years
 
   def output_time(self):
     """
@@ -68,9 +89,9 @@ class IceFlow(object):
     compare models against data, or do any as-of-yet-unknown additional 
     operations
     """
-    if self.t_years[self.t_i] < \
+    if self.year_now < \
       (self.record_timesteps_years[self.record_index] + self.dt/self.secyr/2.) \
-      and self.t_years[self.t_i] >= \
+      and self.year_now >= \
       (self.record_timesteps_years[self.record_index] - self.dt/self.secyr/2.):
       self.record_model_parameters()
       outbool = True
@@ -87,7 +108,7 @@ class IceFlow(object):
       if not self.quiet:
         # display current time step in command window [a]
         print 'Recording snapshot at model year:', \
-              '%10.1f' %(self.t_years[self.t_i])
+              '%10.1f' %(self.year_now)
       if self.GRASS_raster_ice_extent:
         self.compare_with_ice_extent_GRASS_raster()
         if self.verbose:
@@ -101,7 +122,7 @@ class IceFlow(object):
         self.plot_during_run()
     
   def run(self):
-    for self.ts in self.t:
+    while self.year_now < self.run_length_years:
       self.update()
 
   def finalize(self):
@@ -129,7 +150,7 @@ class IceFlow(object):
   #  if option == '
 
   def update_isostatic_response(self):
-    if self.t_years[self.t_i] >= self.t_flexure_update:
+    if self.year_now >= self.t_flexure_update:
       self.t_flexure_update += self.flexure_recalculation_frequency
       if type(self.flex.Te) == np.ndarray:
         # Old subgrid-extraction method
@@ -184,6 +205,8 @@ class IceFlow(object):
     self.run_length_years = None
     self.t_start_years = None
     self.dt_years   = 0.25
+    self.dt_is_variable = True # Adjusts dt for stability
+    self.dt_max = 20 # maximum permissible timestep
     self.t_i = 0 # counter
     
     #############
@@ -358,8 +381,8 @@ class IceFlow(object):
     # Mass balance setup -- PMB #
     #############################
     # These can be grids or constant values across the whole system
-    self.ELA  = None
-    self.dbdz_per_year = None
+    self.ELA  = None # [m]
+    self.dbdz_per_year = None # [m/m/yr]
     # (see above for b_maximum_per_year)
 
     ###################
@@ -407,7 +430,7 @@ class IceFlow(object):
     # Variable conversions from years to seconds
     self.C0 = self.C0_per_year / self.secyr
     self.b_maximum = self.b_maximum_per_year / self.secyr
-    self.dbdz = self.dbdz_per_year = self.secyr
+    self.dbdz = self.dbdz_per_year / self.secyr # currently not used
     self.dt = self.dt_years*self.secyr # time step [s]
     # Combine cold and warm ice flow law parameters [/Pa3/a]
     self.A = self.AoCold*np.exp(-self.QcCold/self.R/self.T) * (self.T < 263.5) + self.AoWarm*np.exp(-self.QcWarm/self.R/self.T) * (self.T >= 263.5) / self.secyr
@@ -445,7 +468,8 @@ class IceFlow(object):
     # and air temperature fields that are perturbed to glacial climate.
     self.precip_lapse = self.precip_lapse_years/self.secyr # convert units of precipitation lapse rate [m/s/m]
     self.mu = self.melt_factor_days/86400. # convert units of melt factor [m/s/K]
-    self.melt_season_length = self.melt_season_length_days * 86400.
+    if self.mass_balance_parameterization == 'TP_PDD':
+      self.melt_season_length = self.melt_season_length_days * 86400.
     # Verbosity
     if self.quiet:
       self.verbose = False
@@ -465,6 +489,18 @@ class IceFlow(object):
       self.y
     except:
       self.y = np.flipud(self.Y[:,0])
+      
+  def initialize_import_grids(self):
+    if self.GRASS_raster_ice_extent:
+      self.iceExtentData = self.garray.array()
+      self.iceExtentData.read(self.GRASS_raster_ice_extent) # Must be binary  
+                                                            # mask of 1 (ice)  
+                                                            # and 0 (not ice)
+                                                            # NULL values are 
+                                                            # treated like 0
+                                                            # in GRASS garray,
+                                                            # so these can be
+                                                            # "no ice" as well.
     
   def initialize_output_lists(self):
     self.record_index = 0 # index of recorded selected time steps [unitless]
@@ -557,13 +593,17 @@ class IceFlow(object):
     self.Ta = self.Tair + self.T_correction # Temperature average through melt season [degC]
     self.Pa = self.Pair * self.P_factor # Total annual precipitation (assume snow?) (doesn't have to be this) [m/s]
 
-  def basic_mass_balance_with_GRASS(self, ELA, dbdz):
+  def basic_mass_balance_with_GRASS(self):
     """
     dbdx = change in mass balance w/ change in x
     dbdy = ditto for y
     ...
     """
-    self.ela0 = self.ELA.copy() # Initial ELA field -- may change over time
+    try:
+      # if array
+      self.ELA0 = self.ELA.copy() # Initial ELA field -- may change over time
+    except:
+      self.ELA0 = self.ELA # for floats, integers, ...
 
   def enforce_boundary_conditions(self):
     # boundary conditions:  
@@ -610,9 +650,9 @@ class IceFlow(object):
       self.dz_plus_H = self.H + self.Zb - self.Zb_initial
       a = (self.Ta + (self.dz_plus_H*self.temperature_lapse))*self.mu * self.melt_season_length # surface ablation scaled to melt season [m/yr]
       c = (self.Pa + (self.dz_plus_H*self.precip_lapse) )*self.secyr # surface accumulation [m/yr]
-      self.b = (c - a) # surface mass balance [m/s]
+      self.b = (c - a) # surface mass balance [m/yr]
     elif self.mass_balance_parameterization == 'ELA':
-      self.b = self.dbdz*(self.Zs-self.ela0)
+      self.b = self.dbdz_per_year*(self.Zs-self.ELA) # [m/yr]
     self.b[self.b > self.b_maximum_per_year] = self.b_maximum_per_year
     self.b /= self.secyr # No clue whether I was trying to do this or not -- looks like seconds are a go!
 
@@ -639,12 +679,12 @@ class IceFlow(object):
     tau_jPhi = -self.rho*self.g*self.H_jPhi*self.dZsdy_jPhi # driving stress at node j+1(?),i [Pa] - positive y direction
     tau_jMhi = -self.rho*self.g*self.H_jMhi*self.dZsdy_jMhi # driving stress at node j-1(?),i [Pa] - negative y direction
     
-    qPh = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alphaPh)**(self.nGlen-1)*self.HPh**(self.nGlen+1)*tauPh # ice discharge at node j,i+1(?) [m2/s]
-    qMh = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alphaMh)**(self.nGlen-1)*self.HMh**(self.nGlen+1)*tauMh # ice discharge at node j,i-1(?) [m2/s]
-    q_jPhi = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alpha_jPhi)**(self.nGlen-1)*self.H_jPhi**(self.nGlen+1)*tau_jPhi # ice discharge at node j+1(?),i [m2/s]
-    q_jMhi = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alpha_jMhi)**(self.nGlen-1)*self.H_jMhi**(self.nGlen+1)*tau_jMhi # ice discharge at node j-1(?),i [m2/s]
+    self.qPh = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alphaPh)**(self.nGlen-1)*self.HPh**(self.nGlen+1)*tauPh # ice discharge at node j,i+1(?) [m2/s]
+    self.qMh = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alphaMh)**(self.nGlen-1)*self.HMh**(self.nGlen+1)*tauMh # ice discharge at node j,i-1(?) [m2/s]
+    self.q_jPhi = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alpha_jPhi)**(self.nGlen-1)*self.H_jPhi**(self.nGlen+1)*tau_jPhi # ice discharge at node j+1(?),i [m2/s]
+    self.q_jMhi = 2*self.A/(self.nGlen+2)*(self.rho*self.g*self.alpha_jMhi)**(self.nGlen-1)*self.H_jMhi**(self.nGlen+1)*tau_jMhi # ice discharge at node j-1(?),i [m2/s]
     
-    self.uD = ( ((qPh/np.maximum(self.HPh,1E-8) + qMh/np.maximum(self.HMh,1E-8)) / 2.)**2 + ((q_jPhi/np.maximum(self.H_jPhi,1E-8) + q_jMhi/np.maximum(self.H_jMhi,1E-8)) / 2.)**2)**0.5 # absolute depth-averaged deformational velocity at node j,i [m/s]
+    self.uD = ( ((self.qPh/np.maximum(self.HPh,1E-8) + self.qMh/np.maximum(self.HMh,1E-8)) / 2.)**2 + ((self.q_jPhi/np.maximum(self.H_jPhi,1E-8) + self.q_jMhi/np.maximum(self.H_jMhi,1E-8)) / 2.)**2)**0.5 # absolute depth-averaged deformational velocity at node j,i [m/s]
 
     if self.sliding:
       uSPh = -self.C0*tauPh # basal sliding velocity at node j,i+1(?) [m/s]
@@ -661,10 +701,15 @@ class IceFlow(object):
     self.dZsdy_jPhi[self.dZsdy_jPhi == 0] = 1E-6 # directional ice surface slope at node j+1(?),i [m/m]
     self.dZsdy_jMhi[self.dZsdy_jMhi == 0] = 1E-6 # directional ice surface slope at node j-1(?),i [m/m]
       
-    DPh = qPh/self.dZsdxPh; DPh[:,-1] = 0 # diffusion term at node j,i+1(?) [m2/s]
-    DMh = qMh/self.dZsdxMh; DMh[:,0] = 0 # diffusion term at node j,i-1(?) [m2/s]     
-    D_jPhi = q_jPhi/self.dZsdy_jPhi; D_jPhi[-1,:] = 0 # diffusion term at node j+1(?),i [m2/s]
-    D_jMhi = q_jMhi/self.dZsdy_jMhi; D_jMhi[0,:] = 0 # diffusion term at node j-1(?),i [m2/s]  
+    DPh = self.qPh/self.dZsdxPh; DPh[:,-1] = 0 # diffusion term at node j,i+1(?) [m2/s]
+    DMh = self.qMh/self.dZsdxMh; DMh[:,0] = 0 # diffusion term at node j,i-1(?) [m2/s]     
+    D_jPhi = self.q_jPhi/self.dZsdy_jPhi; D_jPhi[-1,:] = 0 # diffusion term at node j+1(?),i [m2/s]
+    D_jMhi = self.q_jMhi/self.dZsdy_jMhi; D_jMhi[0,:] = 0 # diffusion term at node j-1(?),i [m2/s]  
+    
+    allDabs = np.abs(np.hstack((DPh,DMh,D_jPhi,D_jMhi)))
+    
+    self.maxD = np.nanmax(allDabs)
+    self.meanD = np.sum(allDabs) / float(np.sum(allDabs > 0))
     
     # create and solve 5-banded matrix:  
     Array_L = (+ DMh*self.dt/self.dx**2 + uSMh*self.dt/2/self.dx) * self.L_term_yes # unknown at node j,i-1 [unitless]
@@ -726,21 +771,18 @@ class IceFlow(object):
     self.c_timestep = self.c_timestep + np.sum(c*(self.H>0))*self.dx*self.dy*self.dt*self.rho # update time step surface accumulation (kg/a) 
   
   def compare_with_ice_extent_GRASS_raster(self):
-    iceExtentData = self.garray.array()
-    iceExtentData.read(self.GRASS_raster_ice_extent) # Must be binary mask of 1 (ice) and 
-                                          # 0 (not ice)
-    modelice = self.H > 1. # Just set a 1-meter limit to the ice thickness
+    modelice = self.H > 5. # Just set a 5-meter limit to the ice thickness
                            # to define ice extent
                            # Might use slope-based subgrid methods in the future
-    comparison = modelice + iceExtentData
+    comparison = modelice + self.iceExtentData
     non_overlap = np.sum(comparison == 1) # number of cells that are ice in the 
                                           # model but are not in the data or
                                           # vice versa (are ice in the data 
                                           # but not in the model
-    overlap_grid = modelice * iceExtentData
+    overlap_grid = modelice * self.iceExtentData
     model_farther_than_ice_margins = np.sum(modelice - overlap_grid)
-    ice_margins_farther_than_model = np.sum(iceExtentData - overlap_grid)
-    measured_ice_extent_cells = np.sum(iceExtentData) # could take this outside
+    ice_margins_farther_than_model = np.sum(self.iceExtentData - overlap_grid)
+    measured_ice_extent_cells = np.sum(self.iceExtentData) # could take this outside
     self.ModelOutsideData_FractOfIceAreaFromData.append( \
          float(model_farther_than_ice_margins/float(measured_ice_extent_cells)))
     self.DataOutsideModel_FractOfIceAreaFromData.append( \
