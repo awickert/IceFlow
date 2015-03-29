@@ -5,6 +5,7 @@ from scipy.io import loadmat
 from scipy.sparse import linalg
 import os
 import sys
+import warnings
 
 class IceFlow(object):
 
@@ -36,7 +37,7 @@ class IceFlow(object):
     self.initialize_sparse_array()
     if self.plot_during_run_flag:
       if self.isostatic:
-        plt.figure(1, figsize=(12,12))
+        plt.figure(1, figsize=(12,8))
       else:
         plt.figure(1)
       plt.show(block = False)
@@ -111,6 +112,13 @@ class IceFlow(object):
       plt.figure(1)
       plt.show(block = True)
       
+  #def resample_qs_to_Te(self, option):
+  #  """
+  #  Resample the load array to the (larger) Te array, which also might be at
+  #  a different scale
+  #  """
+  #  if option == '
+
   def update_isostatic_response(self):
     if self.t_years[self.t_i] >= self.t_flexure_update:
       self.t_flexure_update += self.flexure_recalculation_frequency
@@ -416,6 +424,8 @@ class IceFlow(object):
     if self.GRASS_raster_ice_extent:
       self.ModelOutsideData_FractOfIceAreaFromData = []
       self.DataOutsideModel_FractOfIceAreaFromData = []
+    # Plotting with gFlex
+    self.dz = np.zeros(self.Zb.shape) # define dz for first plotting step
     
   def initialize_output_lists(self):
     self.record_index = 0 # index of recorded selected time steps [unitless]
@@ -836,7 +846,9 @@ class IceFlow(object):
 
     plt.figure(2)
     plt.imshow(self.H, interpolation='nearest')
-    plt.colorbar()
+    # Catch warning about colorbar with all 0's in array
+    with warnings.catch_warnings(record=True) as warning_messages:
+      plt.colorbar()
     plt.title('Ice Thickness', fontsize=16)
     if self.output_figure:
       plt.savefig(self.output_figure)
@@ -847,20 +859,30 @@ class IceFlow(object):
     plt.clf()
     if self.isostatic:
       plt.subplot(221)
+      plt.title('Ice thickness [m]')
       plt.imshow(self.H, interpolation='nearest')
-      plt.colorbar()
+      with warnings.catch_warnings(record=True) as warning_messages:
+        plt.colorbar()
       plt.subplot(222)
-      plt.imshow(self.dz, interpolation='nearest')
-      plt.colorbar()
+      plt.title('Isostatic adjustment rate [m/yr]')
+      plt.imshow(self.dz/self.dt_years, interpolation='nearest')
+      with warnings.catch_warnings(record=True) as warning_messages:
+        plt.colorbar()
       plt.subplot(223)
+      plt.title('Surface mass balance [mm/yr]')
       plt.imshow(self.b * self.secyr * 1000., interpolation='nearest')
-      plt.colorbar()
+      with warnings.catch_warnings(record=True) as warning_messages:
+        plt.colorbar()
       plt.subplot(224)
+      plt.title('Total isostatic adjustment [m]')
       plt.imshow(self.Zb - self.Zb_initial, interpolation='nearest')
-      plt.colorbar()
+      with warnings.catch_warnings(record=True) as warning_messages:
+        plt.colorbar()
     else:
       plt.imshow(self.H, interpolation='nearest')
-      plt.colorbar()
-    plt.title('Ice Thickness', fontsize=16)
+      with warnings.catch_warnings(record=True) as warning_messages:
+        plt.colorbar()
+      plt.title('Ice Thickness', fontsize=16)
+    plt.tight_layout()
     plt.draw()
 
