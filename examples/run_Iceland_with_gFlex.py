@@ -15,7 +15,7 @@ ic.gisbase = '/usr/local/src/grass7_trunk/dist.x86_64-unknown-linux-gnu'
 
 ic.run_length_years = 3000. # years
 ic.t_start_years = 0. # years
-ic.dt_years = 2
+ic.dt_years = 1
 
 ic.elevation = 'elev'
 
@@ -23,8 +23,8 @@ ic.north = 792000
 ic.south = 240000
 ic.west = 108000
 ic.east = 868000
-ic.dx = 8000
-ic.dy = 8000
+ic.dx = 4000
+ic.dy = 4000
 
 ic.mass_balance_parameterization = 'TP_PDD'
 # Goes to Ta variable
@@ -47,7 +47,7 @@ ic.output_figure=None
 ic.plot_at_end_flag=False
 ic.plot_during_run_flag = True
 #ic.plot_t_years = ic.run_length_years
-ic.boundary_condition = 'Neumann0'
+ic.boundary_condition = 'Dirichlet0'
 
 ic.GRASS_raster_ice_extent = 'FakeMeasuredExtents'
 

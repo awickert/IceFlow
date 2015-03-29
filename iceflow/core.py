@@ -3,6 +3,7 @@ from matplotlib import pyplot as plt
 import scipy
 from scipy.io import loadmat
 from scipy.sparse import linalg
+from scipy.interpolate import RectBivariateSpline
 import os
 import sys
 import warnings
@@ -125,12 +126,22 @@ class IceFlow(object):
       if type(self.flex.Te) == np.ndarray:
         # Old subgrid-extraction method
         # Requires the same dx
-        self.flex.qs[(self.south-self.flex.south)/self.flex.dy: \
-                     -(self.flex.north-self.north)/self.flex.dy, \
-                     (self.west-self.flex.west)/self.flex.dx: \
-                     -(self.flex.east-self.east)/self.flex.dx ] = \
-                                         (self.H - self.H0) * 917. * 9.8
-        # New interpolation method
+        # self.flex.qs[(self.south-self.flex.south)/self.flex.dy: \
+        #             -(self.flex.north-self.north)/self.flex.dy, \
+        #             (self.west-self.flex.west)/self.flex.dx: \
+        #             -(self.flex.east-self.east)/self.flex.dx ] = \
+        #                                 (self.H - self.H0) * 917. * 9.8
+        # New interpolation method -- any dx, any grid
+        dHinterp_fcn = RectBivariateSpline( self.x, self.y, 
+                                            (self.H - self.H0).transpose() )
+        dHinterp = dHinterp_fcn(self.flex.xcenter, self.flex.ycenter).transpose()
+        # Set everything to 0 outside of ice model domain
+        dHinterp_mask = (self.flex.Y <= self.north) * \
+                        (self.flex.Y >= self.south) * \
+                        (self.flex.X <= self.east)  * \
+                        (self.flex.X >= self.west)
+        dHinterp *= dHinterp_mask
+        self.flex.qs = dHinterp * 917. * 9.8
       else:
         self.flex.qs = (self.H - self.H0) * 917. * 9.8
       self.flex.run()
@@ -139,10 +150,18 @@ class IceFlow(object):
 
   def compute_isostatic_response(self):
     # exponential for small ts b/c of driving gradient getting smaller
-    equilibrium_deflection = self.flex.w[(self.south-self.flex.south)/self.flex.dy: \
-                                         -(self.flex.north-self.north)/self.flex.dy, \
-                                         (self.west-self.flex.west)/self.flex.dx: \
-                                         -(self.flex.east-self.east)/self.flex.dx]
+    # Old subgrid-extraction method
+    # Requires the same dx
+    #equilibrium_deflection = self.flex.w[(self.south-self.flex.south)/self.flex.dy: \
+    #                                     -(self.flex.north-self.north)/self.flex.dy, \
+    #                                     (self.west-self.flex.west)/self.flex.dx: \
+    #                                     -(self.flex.east-self.east)/self.flex.dx]
+    # New interpolation method -- any dx, any grid
+    # Probably downscaling here -- coarser grid allowed due to low-pass
+    # filtering of flexure
+    winterp_fcn = RectBivariateSpline( self.flex.xcenter, self.flex.ycenter, \
+                                       self.flex.w.transpose() )
+    equilibrium_deflection = winterp_fcn(self.x, self.y).transpose()
     # THIS ASSUMES NO EROSION!!!!!!!!!!!!!!
     # AS IN, APPROACHES EQUILIBRIUM AS ZB-ZB_INITIAL
     self.dz = (equilibrium_deflection - \
@@ -437,7 +456,7 @@ class IceFlow(object):
     try:
       self.y
     except:
-      self.y = self.Y[:,0]
+      self.y = np.flipud(self.Y[:,0])
     
   def initialize_output_lists(self):
     self.record_index = 0 # index of recorded selected time steps [unitless]
@@ -784,9 +803,9 @@ class IceFlow(object):
       self.flex.qs = 0 * self.H0
       
     # Grid on-cell-centers for Te
-    self.flex.xcenter = np.arange(self.flex.west + self.flex.dx, \
+    self.flex.xcenter = np.arange(self.flex.west + self.flex.dx/2., \
                                   self.flex.east, self.flex.dx)
-    self.flex.ycenter = np.arange(self.flex.south + self.flex.dy, \
+    self.flex.ycenter = np.arange(self.flex.south + self.flex.dy/2., \
                                   self.flex.north, self.flex.dy)
     self.flex.X, self.flex.Y = np.meshgrid(self.flex.xcenter, self.flex.ycenter)
     
