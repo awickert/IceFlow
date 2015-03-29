@@ -123,11 +123,14 @@ class IceFlow(object):
     if self.t_years[self.t_i] >= self.t_flexure_update:
       self.t_flexure_update += self.flexure_recalculation_frequency
       if type(self.flex.Te) == np.ndarray:
+        # Old subgrid-extraction method
+        # Requires the same dx
         self.flex.qs[(self.south-self.flex.south)/self.flex.dy: \
                      -(self.flex.north-self.north)/self.flex.dy, \
                      (self.west-self.flex.west)/self.flex.dx: \
                      -(self.flex.east-self.east)/self.flex.dx ] = \
                                          (self.H - self.H0) * 917. * 9.8
+        # New interpolation method
       else:
         self.flex.qs = (self.H - self.H0) * 917. * 9.8
       self.flex.run()
@@ -357,7 +360,7 @@ class IceFlow(object):
         self.ymin = 0
       self.south = self.ymin + self.dy/2.
       self.north = self.ymin + self.dy * self.Zb_initial.shape[0] - self.dy/2.
-      y = np.arange(self.south, self.north + self.dy/10., self.dy)
+      self.y = np.arange(self.south, self.north + self.dy/10., self.dy)
     if self.west and self.east:
       pass
     else:
@@ -367,11 +370,11 @@ class IceFlow(object):
           print "Automatically setting undefined west value to 0"
       self.west = self.xmin + self.dx/2.
       self.east = self.xmin + self.dx * self.Zb_initial.shape[1] - self.dy/2.
-      x = np.arange(self.west, self.east + self.dx/10., self.dx)
+      self.x = np.arange(self.west, self.east + self.dx/10., self.dx)
     if self.west and self.east and self.north and self.south:
       pass
     else:
-      self.x, self.y = np.meshgrid(x, y)
+      self.X, self.Y = np.meshgrid(self.x, self.y) # And these are cell centers
 
   def initialize_compute_variables(self):
     # Variable conversions from years to seconds
@@ -426,6 +429,15 @@ class IceFlow(object):
       self.DataOutsideModel_FractOfIceAreaFromData = []
     # Plotting with gFlex
     self.dz = np.zeros(self.Zb.shape) # define dz for first plotting step
+    # grid
+    try:
+      self.x
+    except:
+      self.x = self.X[0,:]
+    try:
+      self.y
+    except:
+      self.y = self.Y[:,0]
     
   def initialize_output_lists(self):
     self.record_index = 0 # index of recorded selected time steps [unitless]
@@ -485,15 +497,15 @@ class IceFlow(object):
     # And then create the grids of the x and y values that go along with these positions
     self.dx = self.gr.region()['ewres']
     self.dy = self.gr.region()['nsres']
-    self.gr.mapcalc('x = x()', overwrite=True, quiet=True)
-    self.gr.mapcalc('y = y()', overwrite=True, quiet=True)
+    self.gr.mapcalc('x = x()', overwrite=True, quiet=True) # is there a better way?
+    self.gr.mapcalc('y = y()', overwrite=True, quiet=True) # is there a better way?
     #X = np.arange(0, Z.shape[1], self.dx)
     #Y = np.arange(0, Z.shape[0], self.dy)
-    self.x = self.garray.array()
-    self.y = self.garray.array()
-    self.x.read('x')
-    self.y.read('y')
-    self.ny, self.nx = self.x.shape # number of easting and northing nodes [unitless]  
+    self.X = self.garray.array() # cell centers
+    self.Y = self.garray.array() # cell centers
+    self.X.read('x') # cell centers
+    self.Y.read('y') # cell centers
+    self.ny, self.nx = self.X.shape # number of easting and northing nodes [unitless]  
     self.H0 = self.garray.array() # Starts out with 0's at the right shape
     # And ice array, if applicable
     if self.StartingIce:
@@ -581,17 +593,17 @@ class IceFlow(object):
     self.HMh = np.hstack(( np.zeros((self.ny,1)), (self.H[:,1:] + self.H[:,:-1])/2. )) # ice thickness at node j,i-1(?) [m]
     self.H_jPhi = np.vstack(( (self.H[1:,:]+self.H[:-1,:])/2., np.zeros((1,self.nx)) )) # ice thickness at node j+1(?),i [m]
     self.H_jMhi = np.vstack(( np.zeros((1,self.nx)), (self.H[1:,:]+self.H[:-1,:])/2. )) # ice thickness at node j-1(?),i [m]      
-      
-    self.alpha = (np.hstack(( np.zeros((self.ny,1)), (self.Zs[:,2:] - self.Zs[:,:-2]) / (self.x[:,2:] - self.x[:,:-2]), np.zeros((self.ny,1)) ))**2 + np.vstack(( np.zeros((1,self.nx)), (self.Zs[2:,:] - self.Zs[:-2,:])/(self.y[2:,:] - self.y[:-2,:]), np.zeros((1,self.nx)) ))**2)**0.5 # absolute ice surface slope at node i,j [m/m]
+    
+    self.alpha = (np.hstack(( np.zeros((self.ny,1)), (self.Zs[:,2:] - self.Zs[:,:-2]) / (self.X[:,2:] - self.X[:,:-2]), np.zeros((self.ny,1)) ))**2 + np.vstack(( np.zeros((1,self.nx)), (self.Zs[2:,:] - self.Zs[:-2,:])/(self.Y[2:,:] - self.Y[:-2,:]), np.zeros((1,self.nx)) ))**2)**0.5 # absolute ice surface slope at node i,j [m/m]
     self.alphaPh = np.hstack(( (self.alpha[:,1:]+self.alpha[:,:-1])/2., np.zeros((self.ny,1)) )) # absolute ice surface slope at node j,i+1(?) [m]
     self.alphaMh = np.hstack(( np.zeros((self.ny,1)), (self.alpha[:,1:]+self.alpha[:,:-1])/2. )) # absolute ice surface slope at node j,i-1(?) [m]
     self.alpha_jPhi = np.vstack(( (self.alpha[1:,:]+self.alpha[:-1,:])/2., np.zeros((1,self.nx)) )) # absolute ice surface slope at node j+1(?),i [m]
     self.alpha_jMhi = np.vstack(( np.zeros((1,self.nx)), (self.alpha[1:,:]+self.alpha[:-1,:])/2. )) # absolute ice surface slope at node j-1(?),i [m]      
         
-    self.dZsdxPh = np.hstack(( (self.Zs[:,1:]-self.Zs[:,:-1]) / (self.x[:,1:]-self.x[:,:-1]), np.zeros((self.ny,1)) )) # directional ice surface slope at node j,i+1(?) [m/m]
-    self.dZsdxMh = np.hstack(( np.zeros((self.ny,1)), (self.Zs[:,1:]-self.Zs[:,:-1]) / (self.x[:,1:]-self.x[:,:-1]) )) # directional ice surface slope at node j,i-1(?) [m/m]
-    self.dZsdy_jPhi = np.vstack(( (self.Zs[1:,:]-self.Zs[:-1,:]) / (self.y[1:,:]-self.y[:self.ny-1,:]), np.zeros((1,self.nx)) )) # directional ice surface slope at node j+1(?),i [m/m]
-    self.dZsdy_jMhi = np.vstack(( np.zeros((1,self.nx)), (self.Zs[1:,:]-self.Zs[:-1,:]) / (self.y[1:,:]-self.y[:-1,:]) )) # directional ice surface slope at node j-1(?),i [m/m]
+    self.dZsdxPh = np.hstack(( (self.Zs[:,1:]-self.Zs[:,:-1]) / (self.X[:,1:]-self.X[:,:-1]), np.zeros((self.ny,1)) )) # directional ice surface slope at node j,i+1(?) [m/m]
+    self.dZsdxMh = np.hstack(( np.zeros((self.ny,1)), (self.Zs[:,1:]-self.Zs[:,:-1]) / (self.X[:,1:]-self.X[:,:-1]) )) # directional ice surface slope at node j,i-1(?) [m/m]
+    self.dZsdy_jPhi = np.vstack(( (self.Zs[1:,:]-self.Zs[:-1,:]) / (self.Y[1:,:]-self.Y[:self.ny-1,:]), np.zeros((1,self.nx)) )) # directional ice surface slope at node j+1(?),i [m/m]
+    self.dZsdy_jMhi = np.vstack(( np.zeros((1,self.nx)), (self.Zs[1:,:]-self.Zs[:-1,:]) / (self.Y[1:,:]-self.Y[:-1,:]) )) # directional ice surface slope at node j-1(?),i [m/m]
       
     tauPh = -self.rho*self.g*self.HPh*self.dZsdxPh # driving stress at node j,i+1(?) [Pa] - positive x direction
     tauMh = -self.rho*self.g*self.HMh*self.dZsdxMh # driving stress at node j,i-1(?) [Pa] - negative x direction
@@ -770,6 +782,13 @@ class IceFlow(object):
       self.flex.qs = 0 * self.flex.Te
     else:
       self.flex.qs = 0 * self.H0
+      
+    # Grid on-cell-centers for Te
+    self.flex.xcenter = np.arange(self.flex.west + self.flex.dx, \
+                                  self.flex.east, self.flex.dx)
+    self.flex.ycenter = np.arange(self.flex.south + self.flex.dy, \
+                                  self.flex.north, self.flex.dy)
+    self.flex.X, self.flex.Y = np.meshgrid(self.flex.xcenter, self.flex.ycenter)
     
     # Initialize at last
     self.flex.initialize()
@@ -816,7 +835,7 @@ class IceFlow(object):
     # State variables
     out_arrays = (self.H_record, self.Zb_record, self.uD_record, \
                   self.uS_record, self.b_record, self.t_record, \
-                  self.time_series, self.T, self.A, self.C0, self.x, self.y, \
+                  self.time_series, self.T, self.A, self.C0, self.X, self.Y, \
                   self.Zb, self.BC, self.T_correction, \
                   self.P_factor, self.mu, self.dx, self.dy)
     np.save(output_filename, out_arrays)
