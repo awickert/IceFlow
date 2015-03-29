@@ -124,7 +124,7 @@ class IceFlow(object):
         self.flex.qs = (self.H - self.H0) * 917. * 9.8
       self.flex.run()
       self.flex.finalize()
-      self.compute_isostatic_response()
+    self.compute_isostatic_response()
 
   def compute_isostatic_response(self):
     # exponential for small ts b/c of driving gradient getting smaller
@@ -133,7 +133,6 @@ class IceFlow(object):
     # AS IN, APPROACHES EQUILIBRIUM AS ZB-ZB_INITIAL
     self.dz = (self.flex.w - (self.Zb - self.Zb_initial)) * self.dt_years / \
                self.isostatic_response_time_scale
-    print np.max(self.dz)
     self.Zb += self.dz
 
   def add_default_variable_values(self):
