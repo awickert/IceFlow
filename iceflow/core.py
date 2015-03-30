@@ -93,6 +93,9 @@ class IceFlow(object):
     self.output()
     self.t_i += 1
     if self.dt_is_variable:
+      # Force it to hit the data-recording time steps exactly
+      if self.year_now + self.dt_years > self.record_timesteps_years[self.record_index]:
+        self.dt_years = self.record_timesteps_years[self.record_index] - self.year_now
       self.year_now += self.dt_years
     else:
       self.year_now = self.t_years[self.t_i] # 0
@@ -116,12 +119,14 @@ class IceFlow(object):
     compare models against data, or do any as-of-yet-unknown additional 
     operations
     """
-    if self.year_now < \
-      (self.record_timesteps_years[self.record_index] + self.dt/self.secyr/2.) \
-      and self.year_now >= \
-      (self.record_timesteps_years[self.record_index] - self.dt/self.secyr/2.):
-      self.record_model_parameters()
+    #if self.year_now < \
+    #  (self.record_timesteps_years[self.record_index] + self.dt/self.secyr/2.) \
+    #  and self.year_now >= \
+    #  (self.record_timesteps_years[self.record_index] - self.dt/self.secyr/2.):
+    if self.year_now >= self.record_timesteps_years[self.record_index]:
       outbool = True
+      self.record_index += 1;
+      self.record_data_times.append(self.year_now)
     else:
       outbool = False
     return outbool
@@ -149,6 +154,12 @@ class IceFlow(object):
         self.plot_during_run()
     
   def run(self):
+    # "continue_run" abstracted to allow data to be recorded in the final
+    # time step
+    #continue_run = True
+    #while continue_run:
+    #  self.update()
+    #  if self.year_now < self.run_length_years:
     while self.year_now < self.run_length_years:
       self.update()
 
@@ -172,7 +183,6 @@ class IceFlow(object):
     self.t_i = 0
     self.t_flexure_update = 0
     del self.year_now
-    self.H = self.H0.copy() # H0 == H_initial -- must be more consistent
     # self.record_index = 0 # already done
     # self.Zb = self.Zb_initial.copy() # already done
       
@@ -481,13 +491,15 @@ class IceFlow(object):
         and self.data_comparison_frequency_years is not None:
       # I guess the "not none" is redundant
       self.data_comparison_frequency_years = self.record_frequency_years
-
     else:
       pass # must have been defined by user
     tEnd = self.run_length_years*self.secyr # model run length [s]
     self.t = np.arange(0, tEnd+self.dt/10., self.dt) # time vector [s]
     self.t_years = self.t / self.secyr
+    # This is the ideal case
     self.record_timesteps_years = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years)
+    # And this is reality
+    self.record_data_times = []
     # Input elevation map
     if self.Zb_initial is not None:
       pass
@@ -930,7 +942,6 @@ class IceFlow(object):
     #                                          self.b_timestep/self.record_frequency_years, \
     #                                          self.outflow_timestep/self.record_frequency_years ))
       # update time series of mass balance elements [kg/a]
-    self.record_index += 1;
       # update record index [unitless]
     self.b_timestep = 0;
       # reset surface mass balance counter [a]

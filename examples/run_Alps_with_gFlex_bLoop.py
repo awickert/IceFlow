@@ -15,7 +15,7 @@ ic.location='AlpenJuergen'
 # CHANGE GISBASE FOR YOUR COMPUTER!
 ic.gisbase = '/usr/local/src/grass7_trunk/dist.x86_64-unknown-linux-gnu'
 
-ic.run_length_years = 100. # years
+ic.run_length_years = 500. # years
 ic.t_start_years = 0. # years
 ic.dt_years = 5
 ic.dt_is_variable = True # if this is set, the above dt_years still counts
@@ -29,14 +29,15 @@ ic.north = 5400000
 ic.south = 4820000
 ic.west = 170000
 ic.east = 1100000
-ic.dx = 2500
-ic.dy = 2500
+ic.dx = 5000
+ic.dy = 5000
 
 # Set this up to automatically number IceFlow outputs using glob
 ic.output_filename=None
 ic.output_figure=None
 ic.plot_at_end_flag=False
-ic.plot_during_run_flag = False
+ic.plot_during_run_flag = True
+ic.record_model_parameters_flag = False
 #ic.plot_t_years = ic.run_length_years
 ic.boundary_condition = 'Dirichlet0'
 
@@ -44,11 +45,12 @@ ic.GRASS_raster_ice_extent = 'IceExtentAlpenLGM'
 #ic.GRASS_raster_ice_extent = 'LGM_Alpen_noholes'
 
 ic.verbose = False
+ic.quiet=False
 
-ic.record_frequency_years = 20.
+ic.record_frequency_years = 50.
 
 # Flexure
-ic.isostatic = False
+ic.isostatic = True
 #ic.ElasticThickness = 20000
 ic.ElasticThickness = 'EETEurope_meters' # Cell size is 20000 m; this is
                                          # minimum grid size for flexure
@@ -74,9 +76,7 @@ ic.dbdz_per_year = 1E-3 # 1 m/yr over 1 km -- EDIT THIS TO FIT DATA!
 ic.b_maximum_per_year = 0.3 # [m/yr]
 
 # Initialize it
-#ic.quiet=True
 ic.initialize()
-#ic.quiet=False
 
 # Now make some lists of the variables that you want to change
 # Get an empty array of the proper size
@@ -100,8 +100,8 @@ BMAXgrid2 = 0.8 * empty_array
 #BMAXgridFromGIS_1 *= .5
 
 # Fill these brackets with arrays that you create
-ELAgrids = [ELAgrid2]
-BMAXgrids = [BMAXgrid2]
+ELAgrids = [ELAgrid1, ELAgrid2]
+BMAXgrids = [BMAXgrid1, BMAXgrid2]
 
 # And define lists of output values
 ModelOutsideData_FractOfIceAreaFromData_list = []
@@ -112,10 +112,8 @@ RecordTimes_list = []
 for ic.ELA in ELAgrids:
   for ic.b_maximum_per_year in BMAXgrids:
     ic.reinitialize_mass_balance()
-    print np.max(ic.Zb_initial)
     ic.run()
     ic.finalize()
-    print np.max(ic.Zb_initial)
     # These output grids contain fractional areas of modeled ice extent that
     # lies outside the measured ice extent region and of measured ice extent
     # that lies outside the modeled ice extent region. Ideally both would be 0.
