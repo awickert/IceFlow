@@ -45,7 +45,34 @@ class IceFlow(object):
       plt.show(block = False)
     self.year_now = self.t_years[self.t_i] # 0
 
+  def reinitialize_mass_balance(self):
+    """
+    Needed to prevent errors with reinitialization of GRASS location
+    and array --> z_initial, e.g., went to all 0's!
+    """
+    if self.useGRASS:
+      if self.mass_balance_parameterization == 'TP_PDD':
+        self.initialize_climate_from_GRASS()
+      elif self.mass_balance_parameterization == 'ELA':
+        self.basic_mass_balance_with_GRASS()
+    else:
+      print "No mass balance methods without GRASS created yet!"
+    self.initialize_compute_variables()
+    self.initialize_output_lists()
+    self.enforce_boundary_conditions()
+    self.initialize_sparse_array()
+    if self.plot_during_run_flag:
+      if self.isostatic:
+        plt.figure(1, figsize=(12,8))
+      else:
+        plt.figure(1)
+      plt.show(block = False)
+    self.year_now = self.t_years[self.t_i] # 0
+    
   def update(self):
+    if np.isnan(self.H).any():
+      print "NaN values at:", np.isnan(self.H).nonzero()
+      sys.exit('NaN values encountered during model run')
     if self.verbose:
       # display current time step in command window [a]
       print 'model year:', '%10.1f' %(self.year_now)
@@ -73,13 +100,13 @@ class IceFlow(object):
   def update_dt(self):
     # 0 factor of safety
     self.dt_years = np.min((self.dx, self.dy))**2 / (2 * self.meanD * self.secyr)
-    print self.dt_years
     # But at least have a maximum value!
     # Nope -- switched to mean.
     if self.dt_years > self.dt_max or np.isnan(self.dt_years) \
        or np.isinf(self.dt_years):
       self.dt_years = self.dt_max
     self.dt = self.dt_years * self.secyr
+    #print self.dt_years
     if self.verbose:
       print "dt (years):", self.dt_years
 
@@ -141,6 +168,13 @@ class IceFlow(object):
     if self.plot_during_run_flag:
       plt.figure(1)
       plt.show(block = True)
+    # Delete all sorts of values created during the model run
+    self.t_i = 0
+    self.t_flexure_update = 0
+    del self.year_now
+    self.H = self.H0.copy() # H0 == H_initial -- must be more consistent
+    # self.record_index = 0 # already done
+    # self.Zb = self.Zb_initial.copy() # already done
       
   #def resample_qs_to_Te(self, option):
   #  """
@@ -455,8 +489,13 @@ class IceFlow(object):
     self.t_years = self.t / self.secyr
     self.record_timesteps_years = np.arange(0, self.run_length_years+self.record_frequency_years/2., self.record_frequency_years)
     # Input elevation map
-    if type(self.elevation) is not str and type(self.elevation):
-      self.Zb_initial = self.elevation
+    if self.Zb_initial is not None:
+      pass
+    else:
+      if type(self.elevation) is not str and type(self.elevation):
+        self.Zb_initial = self.elevation
+      else:
+        sys.exit("No method for importing Zb arrays yet")
     if self.Zb_initial is not None:
       self.Zb = self.Zb_initial.copy()
     # Second thoughts on this
@@ -653,7 +692,13 @@ class IceFlow(object):
       self.b = (c - a) # surface mass balance [m/yr]
     elif self.mass_balance_parameterization == 'ELA':
       self.b = self.dbdz_per_year*(self.Zs-self.ELA) # [m/yr]
-    self.b[self.b > self.b_maximum_per_year] = self.b_maximum_per_year
+    try:
+      # Scalar
+      self.b[self.b > self.b_maximum_per_year] = self.b_maximum_per_year
+    except:
+      # Array
+      self.b[self.b > self.b_maximum_per_year] = \
+        self.b_maximum_per_year[self.b > self.b_maximum_per_year]
     self.b /= self.secyr # No clue whether I was trying to do this or not -- looks like seconds are a go!
 
   def build_sparse_array(self):
@@ -878,7 +923,7 @@ class IceFlow(object):
       # record time step deformational velocity field [m/a]
     self.b_record.append(self.b*self.secyr)
       # record mass balance [m/a]
-    self.t_record.append(self.t[self.t_i]/self.secyr)
+    self.t_record.append(self.year_now/self.secyr)
     #self.time_series[self.record_index,:] = np.hstack(( self.record_timesteps_years[self.record_index], \
     #                                          self.c_timestep/self.record_frequency_years, \
     #                                          self.a_timestep/self.record_frequency_years, \
