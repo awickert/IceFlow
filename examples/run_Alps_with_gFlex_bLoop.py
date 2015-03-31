@@ -52,15 +52,16 @@ ic.record_frequency_years = 50.
 # Flexure
 ic.isostatic = True
 #ic.ElasticThickness = 20000
-ic.ElasticThickness = 'EETEurope_meters' # Cell size is 20000 m; this is
-                                         # minimum grid size for flexure
+ic.ElasticThickness = 'EETEurope_interp_meters' # Cell size is 5000 m; this is
+                                                # minimum grid size for flexure
+                                                # In general: line up with cells
 # Bounding box for flexure
-ic.flex.north = 5600000
-ic.flex.south = 4000000
-ic.flex.west = -300000
-ic.flex.east = 1500000
-ic.flex.dx = 50000
-ic.flex.dy = 50000
+ic.flex.north = 5800000
+ic.flex.south = 4200000
+ic.flex.west = -400000
+ic.flex.east = 1800000
+ic.flex.dx = 20000
+ic.flex.dy = 20000
 
 ic.isostatic_response_time_scale = 100. # Intentionally short to come to 
                                         # equilibrium quickly
