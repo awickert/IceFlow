@@ -7,6 +7,7 @@ from scipy.interpolate import RectBivariateSpline
 import os
 import sys
 import warnings
+import gflex
 
 class IceFlow(object):
 
