@@ -7,6 +7,7 @@ from scipy.interpolate import RectBivariateSpline
 import os
 import sys
 import warnings
+import gflex
 
 class IceFlow(object):
 
@@ -972,6 +973,7 @@ class IceFlow(object):
     np.save(output_filename + '_DataComparison', data_model_comparison)
     
   def saveGRASS(self):
+    from grass.script import array as garray
     iceGA = garray.array()
     iceGA[...] = self.H
     iceGA.write(self.OutNameGRASS+'_Hice', overwrite=True)
